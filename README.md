@@ -1,6 +1,6 @@
 # kdbx-git
 
-`kdbx-git` is a small WebDAV server that lets multiple KeePass clients share one KDBX database while storing every revision in a bare git repository.
+`kdbx-git` is a small WebDAV server and local sync tool that lets multiple KeePass clients share one KDBX database while storing every revision in a bare git repository.
 
 Each client gets its own branch and WebDAV credentials:
 
@@ -54,6 +54,27 @@ Start the server:
 cargo run -- config.toml
 ```
 
+Keep a local file in sync with a client branch:
+
+```bash
+cargo run -- sync-local config.toml laptop ./laptop.kdbx
+```
+
+Useful options:
+
+- `--once`: perform a single reconciliation and exit
+- `--interval-secs N`: change the polling interval for long-running sync
+
+Examples:
+
+```bash
+# Pull or push once, then exit
+cargo run -- sync-local --once config.toml laptop ./laptop.kdbx
+
+# Run continuously, checking every 10 seconds
+cargo run -- sync-local --interval-secs 10 config.toml laptop ./laptop.kdbx
+```
+
 ## KeePass Client Setup
 
 Point each client at its own WebDAV file:
@@ -63,6 +84,16 @@ Point each client at its own WebDAV file:
 - password: the matching client `password`
 
 The database's master password/key file is still the KDBX master credential from the `[database]` section.
+
+## Local File Sync
+
+`sync-local` watches a local `.kdbx` file and a single client branch:
+
+- if only the branch changed, it rewrites the local file
+- if only the local file changed, it commits that state to the client branch
+- if both diverged, it runs the same KeePass-level merge logic and updates both sides
+
+This is useful if you want branch-backed syncing without mounting WebDAV in your desktop workflow.
 
 ## Docker
 

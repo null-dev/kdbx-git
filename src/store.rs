@@ -284,22 +284,6 @@ impl GitStore {
         }
     }
 
-    /// Perform a keepass-level merge of `from_storage` into `into_storage`.
-    fn merge_storage(
-        into_storage: &StorageDatabase,
-        from_storage: &StorageDatabase,
-    ) -> Result<StorageDatabase> {
-        let config = merge_db_config();
-        let mut into_db = storage_to_db(into_storage, config.clone())
-            .wrap_err("failed to reconstruct 'into' database for merge")?;
-        let from_db = storage_to_db(from_storage, config)
-            .wrap_err("failed to reconstruct 'from' database for merge")?;
-        into_db
-            .merge(&from_db)
-            .map_err(|e| eyre::eyre!("keepass merge failed: {e:?}"))?;
-        db_to_storage(&into_db).wrap_err("failed to convert merged database back to storage")
-    }
-
     // ── Async public API (step 4) ─────────────────────────────────────────────
 
     /// Read the storage database from the tip of `branch`.
@@ -491,7 +475,7 @@ impl GitStore {
                 let from = from_branch.clone();
                 let into = into_branch.clone();
                 spawn_blocking(move || {
-                    Self::merge_storage(&into_storage, &from_storage)
+                    merge_databases(&into_storage, &from_storage)
                         .wrap_err_with(|| format!("merge of '{from}' into '{into}' failed"))
                 })
                 .await
@@ -553,6 +537,22 @@ impl GitStore {
 
         Ok(())
     }
+}
+
+/// Perform a keepass-level merge of `from_storage` into `into_storage`.
+pub fn merge_databases(
+    into_storage: &StorageDatabase,
+    from_storage: &StorageDatabase,
+) -> Result<StorageDatabase> {
+    let config = merge_db_config();
+    let mut into_db = storage_to_db(into_storage, config.clone())
+        .wrap_err("failed to reconstruct 'into' database for merge")?;
+    let from_db = storage_to_db(from_storage, config)
+        .wrap_err("failed to reconstruct 'from' database for merge")?;
+    into_db
+        .merge(&from_db)
+        .map_err(|e| eyre::eyre!("keepass merge failed: {e:?}"))?;
+    db_to_storage(&into_db).wrap_err("failed to convert merged database back to storage")
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

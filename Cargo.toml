@@ -22,6 +22,9 @@ toml = "0.8"
 # HTTP / WebDAV
 axum = "0.8"
 dav-server = "0.11"
+futures-util = "0.3"
+bytes = "1"
+http = "1"
 
 # Error handling
 eyre = "0.6"

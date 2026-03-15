@@ -56,14 +56,14 @@ Build a `GitStore` abstraction around gitoxide (`gix`):
 
 Implement the branch lifecycle used by the server:
 
-- [ ] On first client access, create the client's branch by forking from `main` (or initializing it if `main` doesn't exist yet).
-- [ ] **Client write flow**:
+- [x] On first client access, create the client's branch by forking from `main` (or initializing it if `main` doesn't exist yet).
+- [x] **Client write flow**:
   1. Commit the new database state to the client's branch.
   2. Attempt to merge the client's branch into `main`:
      - If fast-forward is possible, just move `main`'s ref.
      - Otherwise, read both sides, call `keepass-nd`'s database merge method, and write the merged result as a new commit on `main`.
   3. If the merge to `main` succeeded, fan out: merge `main` into every other client branch using the same strategy.
-- [ ] Conflict handling: if a merge produces an error, log it and leave the affected branches unchanged.
+- [x] Conflict handling: if a merge produces an error, log it and leave the affected branches unchanged.
 
 ---
 
@@ -71,9 +71,9 @@ Implement the branch lifecycle used by the server:
 
 Implement the in-memory KDBX builder used for client reads:
 
-- [ ] Read the client's branch tip from `GitStore`.
-- [ ] Re-encrypt the database contents into a KDBX 4.1 binary using keepass-nd, using the same master credentials as the original database.
-- [ ] Return the resulting bytes as the file body served over WebDAV.
+- [x] Read the client's branch tip from `GitStore`.
+- [x] Re-encrypt the database contents into a KDBX 4.1 binary using keepass-nd, using the same master credentials as the original database.
+- [x] Return the resulting bytes as the file body served over WebDAV.
 
 ---
 
@@ -81,12 +81,12 @@ Implement the in-memory KDBX builder used for client reads:
 
 Wire up `dav-server-rs` as an Axum handler:
 
-- [ ] Define a per-client route, e.g. `GET/PUT /dav/{client_id}/database.kdbx`.
-- [ ] Implement a minimal `DavProvider` (or use `LocalFs` with a tmpfile strategy) that:
-  - [ ] On `GET`: calls the virtual file builder from Step 6.
-  - [ ] On `PUT`: receives the uploaded bytes, decrypts via keepass-nd, triggers the write flow from Step 5.
-- [ ] Add HTTP Basic Auth middleware in Axum: extract the `Authorization` header, look up the client by credentials, and reject unknown clients with `401`.
-- [ ] Serve all client routes under a single Axum `Router`.
+- [x] Define a per-client route, e.g. `GET/PUT /dav/{client_id}/database.kdbx`.
+- [x] Implement a minimal `DavProvider` (or use `LocalFs` with a tmpfile strategy) that:
+  - [x] On `GET`: calls the virtual file builder from Step 6.
+  - [x] On `PUT`: receives the uploaded bytes, decrypts via keepass-nd, triggers the write flow from Step 5.
+- [x] Add HTTP Basic Auth middleware in Axum: extract the `Authorization` header, look up the client by credentials, and reject unknown clients with `401`.
+- [x] Serve all client routes under a single Axum `Router`.
 
 ---
 
@@ -94,9 +94,9 @@ Wire up `dav-server-rs` as an Axum handler:
 
 Ensure correctness under simultaneous client access:
 
-- [ ] Wrap `GitStore` in an `Arc<tokio::sync::Mutex<GitStore>>` (or a per-branch `RwLock` map) so concurrent writes are serialized.
-- [ ] Keep read operations (GET) outside the write lock where possible.
-- [ ] Add tracing spans around every major operation for visibility.
+- [x] Wrap `GitStore` in an `Arc<tokio::sync::Mutex<GitStore>>` (or a per-branch `RwLock` map) so concurrent writes are serialized.
+- [x] Keep read operations (GET) outside the write lock where possible.
+- [x] Add tracing spans around every major operation for visibility.
 
 ---
 

@@ -2,10 +2,13 @@ use color_eyre::eyre::Result;
 use tracing::info;
 
 mod config;
+mod kdbx;
+mod server;
 mod storage;
 mod store;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     color_eyre::install()?;
 
     tracing_subscriber::fmt()
@@ -17,5 +20,12 @@ fn main() -> Result<()> {
 
     info!("kdbx-git starting");
 
-    Ok(())
+    let config_path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "config.toml".to_string());
+
+    let config = config::Config::from_file(std::path::Path::new(&config_path))?;
+    let store = store::GitStore::open_or_init(&config.git_store)?;
+
+    server::run_server(config, store).await
 }

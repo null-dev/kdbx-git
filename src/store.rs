@@ -36,6 +36,7 @@ use tracing::{debug, info, warn};
 pub const MAIN_BRANCH: &str = "main";
 const BOT_NAME: &str = "kdbx-git";
 const BOT_EMAIL: &str = "kdbx-git@localhost";
+const REF_UPDATE_RETRIES: usize = 3;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -207,49 +208,63 @@ impl GitStore {
     ) -> Result<ObjectId> {
         let text = serialize(storage, format)?;
 
-        // blob
-        let blob_id = repo
-            .write_blob(text.as_bytes())
-            .wrap_err("failed to write blob")?
-            .detach();
+        for attempt in 0..REF_UPDATE_RETRIES {
+            // blob
+            let blob_id = repo
+                .write_blob(text.as_bytes())
+                .wrap_err("failed to write blob")?
+                .detach();
 
-        // tree (single entry)
-        let entry = gix::objs::tree::Entry {
-            mode: gix::objs::tree::EntryKind::Blob.into(),
-            filename: format.file_name().into(),
-            oid: blob_id,
-        };
-        let tree_obj = gix::objs::Tree {
-            entries: vec![entry],
-        };
-        let tree_id = repo
-            .write_object(&tree_obj)
-            .wrap_err("failed to write tree")?
-            .detach();
+            // tree (single entry)
+            let entry = gix::objs::tree::Entry {
+                mode: gix::objs::tree::EntryKind::Blob.into(),
+                filename: format.file_name().into(),
+                oid: blob_id,
+            };
+            let tree_obj = gix::objs::Tree {
+                entries: vec![entry],
+            };
+            let tree_id = repo
+                .write_object(&tree_obj)
+                .wrap_err("failed to write tree")?
+                .detach();
 
-        // parent = current branch tip (None for the first commit)
-        let parent = Self::branch_tip_id_sync(repo, branch)?;
+            let parent = Self::branch_tip_id_sync(repo, branch)?;
 
-        // commit
-        let sig = bot_signature();
-        let commit_obj = gix::objs::Commit {
-            tree: tree_id,
-            parents: parent.into_iter().collect::<Vec<_>>().into(),
-            author: sig.clone(),
-            committer: sig,
-            encoding: None,
-            message: message.into(),
-            extra_headers: vec![],
-        };
-        let commit_id = repo
-            .write_object(&commit_obj)
-            .wrap_err("failed to write commit")?
-            .detach();
+            let sig = bot_signature();
+            let commit_obj = gix::objs::Commit {
+                tree: tree_id,
+                parents: parent.into_iter().collect::<Vec<_>>().into(),
+                author: sig.clone(),
+                committer: sig,
+                encoding: None,
+                message: message.into(),
+                extra_headers: vec![],
+            };
+            let commit_id = repo
+                .write_object(&commit_obj)
+                .wrap_err("failed to write commit")?
+                .detach();
 
-        // advance the ref
-        Self::set_branch_ref_sync(repo, branch, commit_id, parent, message)?;
+            match Self::set_branch_ref_sync(repo, branch, commit_id, parent, message) {
+                Ok(()) => return Ok(commit_id),
+                Err(err) => {
+                    let observed = Self::branch_tip_id_sync(repo, branch)?;
+                    let raced = observed != parent;
+                    if raced && attempt + 1 < REF_UPDATE_RETRIES {
+                        warn!(
+                            "ref update raced while committing to '{branch}', retrying (attempt {}/{})",
+                            attempt + 2,
+                            REF_UPDATE_RETRIES
+                        );
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
 
-        Ok(commit_id)
+        unreachable!("ref update retry loop must return or error")
     }
 
     /// Return `true` if `ancestor` is a reachable ancestor of `descendant`
@@ -307,7 +322,13 @@ impl GitStore {
         let repo = self.repo.clone();
         let format = self.format;
         spawn_blocking(move || {
-            Self::commit_to_branch_sync(&repo.to_thread_local(), &branch, &storage, format, &message)
+            Self::commit_to_branch_sync(
+                &repo.to_thread_local(),
+                &branch,
+                &storage,
+                format,
+                &message,
+            )
         })
         .await
         .wrap_err("blocking task panicked")?
@@ -321,12 +342,28 @@ impl GitStore {
             .wrap_err("blocking task panicked")?
     }
 
+    /// Import an initial database state onto `main`.
+    pub async fn bootstrap_main(
+        &self,
+        storage: StorageDatabase,
+        message: String,
+    ) -> Result<ObjectId> {
+        if self.branch_tip_id(MAIN_BRANCH.to_string()).await?.is_some() {
+            bail!("{MAIN_BRANCH} already exists; refusing to overwrite imported history");
+        }
+
+        self.commit_to_branch(MAIN_BRANCH.to_string(), storage, message)
+            .await
+    }
+
     /// Return `true` if `ancestor` is reachable from `descendant`.
     pub async fn is_ancestor(&self, ancestor: ObjectId, descendant: ObjectId) -> Result<bool> {
         let repo = self.repo.clone();
-        spawn_blocking(move || Self::is_ancestor_sync(&repo.to_thread_local(), ancestor, descendant))
-            .await
-            .wrap_err("blocking task panicked")?
+        spawn_blocking(move || {
+            Self::is_ancestor_sync(&repo.to_thread_local(), ancestor, descendant)
+        })
+        .await
+        .wrap_err("blocking task panicked")?
     }
 
     /// Move `branch` to point at `to`, used for fast-forward operations.
@@ -339,8 +376,31 @@ impl GitStore {
         let repo = self.repo.clone();
         spawn_blocking(move || {
             let repo = repo.to_thread_local();
-            let prev = Self::branch_tip_id_sync(&repo, &branch)?;
-            Self::set_branch_ref_sync(&repo, &branch, to, prev, &message)
+            for attempt in 0..REF_UPDATE_RETRIES {
+                let prev = Self::branch_tip_id_sync(&repo, &branch)?;
+                if prev == Some(to) {
+                    return Ok(());
+                }
+
+                match Self::set_branch_ref_sync(&repo, &branch, to, prev, &message) {
+                    Ok(()) => return Ok(()),
+                    Err(err) => {
+                        let observed = Self::branch_tip_id_sync(&repo, &branch)?;
+                        let raced = observed != prev;
+                        if raced && attempt + 1 < REF_UPDATE_RETRIES {
+                            warn!(
+                                "ref update raced while fast-forwarding '{branch}', retrying (attempt {}/{})",
+                                attempt + 2,
+                                REF_UPDATE_RETRIES
+                            );
+                            continue;
+                        }
+                        return Err(err);
+                    }
+                }
+            }
+
+            unreachable!("ref update retry loop must return or error")
         })
         .await
         .wrap_err("blocking task panicked")?
@@ -360,12 +420,8 @@ impl GitStore {
         }
         if let Some(main_tip) = self.branch_tip_id(MAIN_BRANCH.to_string()).await? {
             info!("Creating branch '{client_branch}' from {MAIN_BRANCH} @ {main_tip}");
-            self.fast_forward_branch(
-                client_branch,
-                main_tip,
-                format!("fork from {MAIN_BRANCH}"),
-            )
-            .await?;
+            self.fast_forward_branch(client_branch, main_tip, format!("fork from {MAIN_BRANCH}"))
+                .await?;
         }
         Ok(())
     }
@@ -436,9 +492,7 @@ impl GitStore {
                 let into = into_branch.clone();
                 spawn_blocking(move || {
                     Self::merge_storage(&into_storage, &from_storage)
-                        .wrap_err_with(|| {
-                            format!("merge of '{from}' into '{into}' failed")
-                        })
+                        .wrap_err_with(|| format!("merge of '{from}' into '{into}' failed"))
                 })
                 .await
                 .wrap_err("merge task panicked")??
@@ -643,14 +697,8 @@ mod tests {
 
         // Read it back
         let read = store.read_branch("main".into()).await.unwrap().unwrap();
-        assert_eq!(
-            read.meta.database_name,
-            Some("TestDB".into())
-        );
-        assert_eq!(
-            read.root.entries[0].fields["Password"].value,
-            "hunter2"
-        );
+        assert_eq!(read.meta.database_name, Some("TestDB".into()));
+        assert_eq!(read.root.entries[0].fields["Password"].value, "hunter2");
         assert!(read.root.entries[0].fields["Password"].protected);
     }
 
@@ -703,10 +751,7 @@ mod tests {
     async fn test_ensure_client_branch_no_main() {
         let (_dir, store) = make_temp_store();
         // Should succeed silently when main doesn't exist yet
-        store
-            .ensure_client_branch("alice".into())
-            .await
-            .unwrap();
+        store.ensure_client_branch("alice".into()).await.unwrap();
         // No branch created yet (will happen on first write)
         assert!(store.branch_tip_id("alice".into()).await.unwrap().is_none());
     }
@@ -721,13 +766,13 @@ mod tests {
             .unwrap();
         let main_tip = store.branch_tip_id("main".into()).await.unwrap().unwrap();
 
-        store
-            .ensure_client_branch("alice".into())
-            .await
-            .unwrap();
+        store.ensure_client_branch("alice".into()).await.unwrap();
 
         let alice_tip = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
-        assert_eq!(alice_tip, main_tip, "alice should start at the same commit as main");
+        assert_eq!(
+            alice_tip, main_tip,
+            "alice should start at the same commit as main"
+        );
     }
 
     #[tokio::test]
@@ -736,11 +781,7 @@ mod tests {
         let (_dir, store) = make_temp_store();
 
         store
-            .process_client_write(
-                "alice".into(),
-                simple_db("alice-db"),
-                vec!["alice".into()],
-            )
+            .process_client_write("alice".into(), simple_db("alice-db"), vec!["alice".into()])
             .await
             .unwrap();
 
@@ -751,6 +792,22 @@ mod tests {
             alice_tip, main_tip,
             "main should be fast-forwarded to alice's commit"
         );
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_main_rejects_overwrite() {
+        let (_dir, store) = make_temp_store();
+
+        store
+            .bootstrap_main(simple_db("initial"), "import".into())
+            .await
+            .unwrap();
+
+        let err = store
+            .bootstrap_main(simple_db("second"), "import again".into())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("refusing to overwrite"));
     }
 
     #[tokio::test]
@@ -810,11 +867,7 @@ mod tests {
         });
 
         store
-            .process_client_write(
-                "bob".into(),
-                bob_db,
-                vec!["alice".into(), "bob".into()],
-            )
+            .process_client_write("bob".into(), bob_db, vec!["alice".into(), "bob".into()])
             .await
             .unwrap();
 

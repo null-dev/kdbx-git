@@ -16,6 +16,8 @@ pub enum StorageFormat {
 }
 
 impl StorageFormat {
+    pub const ALL: [Self; 3] = [Self::Json, Self::Yaml, Self::Toml];
+
     pub fn file_extension(self) -> &'static str {
         match self {
             Self::Json => "json",
@@ -172,22 +174,19 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_json() {
+    fn roundtrip_all_supported_formats() {
         let db = minimal_db();
-        let s = serialize(&db, StorageFormat::Json).unwrap();
-        let db2 = deserialize(&s, StorageFormat::Json).unwrap();
-        assert_eq!(
-            db2.root.entries[0].fields["Password"].value,
-            "s3cr3t"
-        );
-        assert!(db2.root.entries[0].fields["Password"].protected);
+        for format in StorageFormat::ALL {
+            let s = serialize(&db, format).unwrap();
+            let db2 = deserialize(&s, format).unwrap();
+            assert_eq!(db2.root.entries[0].fields["Password"].value, "s3cr3t");
+            assert!(db2.root.entries[0].fields["Password"].protected);
+        }
     }
 
     #[test]
-    fn roundtrip_yaml() {
-        let db = minimal_db();
-        let s = serialize(&db, StorageFormat::Yaml).unwrap();
-        let db2 = deserialize(&s, StorageFormat::Yaml).unwrap();
-        assert_eq!(db2.meta.database_name, Some("Test DB".into()));
+    fn json_remains_the_default_storage_format() {
+        assert_eq!(StorageFormat::default(), StorageFormat::Json);
+        assert_eq!(StorageFormat::default().file_name(), "db.json");
     }
 }

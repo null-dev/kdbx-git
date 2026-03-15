@@ -102,15 +102,15 @@ Ensure correctness under simultaneous client access:
 
 ## Step 9 — Integration Testing & Hardening
 
-- [ ] Write an integration test that spins up the server in a temp directory, uploads a KDBX file as one client, reads it back as another, and verifies the merged content is consistent.
-- [ ] Verify `git log` on the storage repo shows readable history (satisfying the "inspect with git CLI" requirement).
-- [ ] Test the round-trip of all supported serialization formats (NUON, JSON, YAML, TOML) and pick one as the default.
-- [ ] Harden error paths: malformed uploads, wrong password, ref update races.
+- [x] Write an integration test that spins up the server in a temp directory, uploads a KDBX file as one client, reads it back as another, and verifies the merged content is consistent.
+- [x] Verify `git log` on the storage repo shows readable history (satisfying the "inspect with git CLI" requirement).
+- [x] Test the round-trip of all currently supported serialization formats (JSON, YAML, TOML) and keep JSON as the default. (NUON remains intentionally unsupported in this implementation.)
+- [x] Harden error paths: malformed uploads, wrong password, ref update races.
 
 ---
 
 ## Step 10 — Polish & Packaging
 
-- [ ] Add a `--init` subcommand to import an existing KDBX file and bootstrap the git repo + `main` branch.
-- [ ] Write a concise `README.md` covering setup, config format, and how to point a KeePass client at the WebDAV endpoint.
-- [ ] Add a `Dockerfile` for deployment.
+- [x] Add a `--init` subcommand to import an existing KDBX file and bootstrap the git repo + `main` branch.
+- [x] Write a concise `README.md` covering setup, config format, and how to point a KeePass client at the WebDAV endpoint.
+- [x] Add a `Dockerfile` for deployment.

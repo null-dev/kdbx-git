@@ -1,0 +1,228 @@
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
+
+use color_eyre::eyre::Result;
+use kdbx_git::{
+    config::{ClientConfig, Config, DatabaseCredentials},
+    kdbx::{build_kdbx_sync, parse_kdbx_sync},
+    server::{serve_listener, AppState},
+    storage::types::{
+        StorageDatabase, StorageEntry, StorageGroup, StorageMeta, StorageTimes, StorageValue,
+    },
+    store::GitStore,
+};
+use tempfile::TempDir;
+use tokio::{net::TcpListener, task::JoinHandle};
+
+pub const MASTER_PASSWORD: &str = "integration-test-password";
+
+pub struct TestServer {
+    _tempdir: TempDir,
+    pub config: Config,
+    pub base_url: String,
+    handle: JoinHandle<Result<()>>,
+}
+
+impl TestServer {
+    pub async fn start(config: Config, tempdir: TempDir) -> Result<Self> {
+        let listener = TcpListener::bind(&config.bind_addr).await?;
+        let base_url = format!("http://{}", listener.local_addr()?);
+        let store = GitStore::open_or_init(&config.git_store)?;
+        let state = AppState::new(config.clone(), store);
+        let handle = tokio::spawn(async move { serve_listener(listener, state).await });
+
+        Ok(Self {
+            _tempdir: tempdir,
+            config,
+            base_url,
+            handle,
+        })
+    }
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+pub fn test_credentials(source_path: Option<PathBuf>) -> DatabaseCredentials {
+    DatabaseCredentials {
+        path: source_path,
+        password: Some(MASTER_PASSWORD.to_string()),
+        keyfile: None,
+    }
+}
+
+pub fn test_config(root: &Path, source_path: Option<PathBuf>) -> Config {
+    Config {
+        git_store: root.join("store.git"),
+        bind_addr: "127.0.0.1:0".to_string(),
+        database: test_credentials(source_path),
+        clients: vec![
+            ClientConfig {
+                id: "alice".into(),
+                username: "alice-user".into(),
+                password: "alice-pass".into(),
+            },
+            ClientConfig {
+                id: "bob".into(),
+                username: "bob-user".into(),
+                password: "bob-pass".into(),
+            },
+        ],
+    }
+}
+
+pub fn sample_db(name: &str, title: &str) -> StorageDatabase {
+    let mut db = StorageDatabase {
+        meta: StorageMeta {
+            generator: Some("kdbx-git-integration".into()),
+            database_name: Some(name.into()),
+            database_name_changed: None,
+            database_description: None,
+            database_description_changed: None,
+            default_username: None,
+            default_username_changed: None,
+            maintenance_history_days: None,
+            color: None,
+            master_key_changed: None,
+            master_key_change_rec: None,
+            master_key_change_force: None,
+            memory_protection: None,
+            recyclebin_enabled: None,
+            recyclebin_uuid: None,
+            recyclebin_changed: None,
+            entry_templates_group: None,
+            entry_templates_group_changed: None,
+            last_selected_group: None,
+            last_top_visible_group: None,
+            history_max_items: None,
+            history_max_size: None,
+            settings_changed: None,
+            custom_data: HashMap::new(),
+        },
+        root: StorageGroup {
+            uuid: "00000000-0000-0000-0000-000000000001".into(),
+            name: "Root".into(),
+            notes: None,
+            icon_id: None,
+            custom_icon: None,
+            groups: vec![],
+            entries: vec![],
+            times: StorageTimes {
+                creation: None,
+                last_modification: None,
+                last_access: None,
+                expiry: None,
+                location_changed: None,
+                expires: None,
+                usage_count: None,
+            },
+            custom_data: HashMap::new(),
+            is_expanded: true,
+            default_autotype_sequence: None,
+            enable_autotype: None,
+            enable_searching: None,
+            last_top_visible_entry: None,
+            tags: vec![],
+            previous_parent_group: None,
+        },
+        deleted_objects: HashMap::new(),
+    };
+
+    add_entry(
+        &mut db,
+        "00000000-0000-0000-0000-000000000010",
+        title,
+        "demo-user",
+        "hunter2",
+    );
+
+    db
+}
+
+pub fn add_entry(
+    db: &mut StorageDatabase,
+    uuid: &str,
+    title: &str,
+    username: &str,
+    password: &str,
+) {
+    let mut fields = HashMap::new();
+    fields.insert(
+        "Title".into(),
+        StorageValue {
+            value: title.into(),
+            protected: false,
+        },
+    );
+    fields.insert(
+        "UserName".into(),
+        StorageValue {
+            value: username.into(),
+            protected: false,
+        },
+    );
+    fields.insert(
+        "Password".into(),
+        StorageValue {
+            value: password.into(),
+            protected: true,
+        },
+    );
+
+    db.root.entries.push(StorageEntry {
+        uuid: uuid.into(),
+        fields,
+        autotype: None,
+        tags: vec![],
+        times: StorageTimes {
+            creation: Some("2024-01-01T00:00:00".into()),
+            last_modification: Some("2024-01-01T00:00:01".into()),
+            last_access: None,
+            expiry: None,
+            location_changed: None,
+            expires: Some(false),
+            usage_count: Some(0),
+        },
+        custom_data: HashMap::new(),
+        icon_id: None,
+        custom_icon: None,
+        foreground_color: None,
+        background_color: None,
+        override_url: None,
+        quality_check: None,
+        previous_parent_group: None,
+        attachments: HashMap::new(),
+        history: vec![],
+    });
+}
+
+pub fn entry_titles(db: &StorageDatabase) -> Vec<String> {
+    db.root
+        .entries
+        .iter()
+        .filter_map(|entry| entry.fields.get("Title"))
+        .map(|value| value.value.clone())
+        .collect()
+}
+
+pub fn build_kdbx_bytes(db: &StorageDatabase, creds: &DatabaseCredentials) -> Vec<u8> {
+    build_kdbx_sync(db, creds).expect("failed to build test KDBX")
+}
+
+pub fn parse_kdbx_bytes(bytes: &[u8], creds: &DatabaseCredentials) -> StorageDatabase {
+    parse_kdbx_sync(bytes, creds).expect("failed to parse test KDBX")
+}
+
+pub fn write_source_kdbx(path: &Path, db: &StorageDatabase, creds: &DatabaseCredentials) {
+    std::fs::write(path, build_kdbx_bytes(db, creds)).expect("failed to write test KDBX");
+}
+
+pub fn write_config(path: &Path, config: &Config) {
+    let contents = toml::to_string_pretty(config).expect("failed to serialize config");
+    std::fs::write(path, contents).expect("failed to write config file");
+}

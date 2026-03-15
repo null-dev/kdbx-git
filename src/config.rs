@@ -1,9 +1,9 @@
 use eyre::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Top-level server configuration, loaded from a TOML file.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     /// Path to the bare git repository used for storage.
     pub git_store: PathBuf,
@@ -16,8 +16,10 @@ pub struct Config {
 }
 
 /// Credentials for opening/saving the KDBX database.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DatabaseCredentials {
+    /// Path to an existing KDBX database used by `--init`.
+    pub path: Option<PathBuf>,
     /// Master password (optional if a key file is provided).
     pub password: Option<String>,
     /// Path to a KeePass key file (optional).
@@ -25,7 +27,7 @@ pub struct DatabaseCredentials {
 }
 
 /// Per-client configuration.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClientConfig {
     /// Unique client identifier; used as the git branch name.
     pub id: String,

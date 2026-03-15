@@ -27,7 +27,9 @@ pub fn make_key(creds: &DatabaseCredentials) -> Result<DatabaseKey> {
     }
     if let Some(keyfile_path) = &creds.keyfile {
         let mut f = std::fs::File::open(keyfile_path).wrap_err("failed to open keyfile")?;
-        key = key.with_keyfile(&mut f).wrap_err("failed to load keyfile")?;
+        key = key
+            .with_keyfile(&mut f)
+            .wrap_err("failed to load keyfile")?;
     }
     Ok(key)
 }
@@ -35,10 +37,7 @@ pub fn make_key(creds: &DatabaseCredentials) -> Result<DatabaseKey> {
 /// Serialize `storage` to KDBX 4.1 bytes.
 ///
 /// Blocking — call inside `tokio::task::spawn_blocking`.
-pub fn build_kdbx_sync(
-    storage: &StorageDatabase,
-    creds: &DatabaseCredentials,
-) -> Result<Vec<u8>> {
+pub fn build_kdbx_sync(storage: &StorageDatabase, creds: &DatabaseCredentials) -> Result<Vec<u8>> {
     let config = DatabaseConfig {
         version: DatabaseVersion::KDB4(1),
         outer_cipher_config: OuterCipherConfig::AES256,

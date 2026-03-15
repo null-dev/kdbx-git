@@ -22,11 +22,7 @@
 //! 4. **[`AppState`]** wraps [`GitStore`] in `Arc<tokio::sync::Mutex<...>>`
 //!    (step 8) so concurrent writes are serialised.
 
-use std::{
-    io::SeekFrom,
-    sync::Arc,
-    time::SystemTime,
-};
+use std::{io::SeekFrom, sync::Arc, time::SystemTime};
 
 use axum::{
     extract::{Request, State},
@@ -47,7 +43,7 @@ use dav_server::{
 };
 use eyre::{Context, Result};
 use futures_util::stream;
-use http::{StatusCode, header};
+use http::{header, StatusCode};
 use tokio::{sync::Mutex, task::spawn_blocking};
 use tracing::{info, warn};
 
@@ -66,6 +62,15 @@ pub struct AppState {
     pub config: Arc<Config>,
 }
 
+impl AppState {
+    pub fn new(config: Config, store: GitStore) -> Self {
+        Self {
+            store: Arc::new(Mutex::new(store)),
+            config: Arc::new(config),
+        }
+    }
+}
+
 // ── Metadata types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -78,15 +83,27 @@ struct FileMeta {
 struct DirMeta;
 
 impl DavMetaData for FileMeta {
-    fn len(&self) -> u64 { self.len }
-    fn modified(&self) -> FsResult<SystemTime> { Ok(self.modified) }
-    fn is_dir(&self) -> bool { false }
+    fn len(&self) -> u64 {
+        self.len
+    }
+    fn modified(&self) -> FsResult<SystemTime> {
+        Ok(self.modified)
+    }
+    fn is_dir(&self) -> bool {
+        false
+    }
 }
 
 impl DavMetaData for DirMeta {
-    fn len(&self) -> u64 { 0 }
-    fn modified(&self) -> FsResult<SystemTime> { Ok(SystemTime::now()) }
-    fn is_dir(&self) -> bool { true }
+    fn len(&self) -> u64 {
+        0
+    }
+    fn modified(&self) -> FsResult<SystemTime> {
+        Ok(SystemTime::now())
+    }
+    fn is_dir(&self) -> bool {
+        true
+    }
 }
 
 // ── Directory entry ───────────────────────────────────────────────────────────
@@ -95,12 +112,16 @@ impl DavMetaData for DirMeta {
 struct DbFileEntry;
 
 impl DavDirEntry for DbFileEntry {
-    fn name(&self) -> Vec<u8> { b"database.kdbx".to_vec() }
+    fn name(&self) -> Vec<u8> {
+        b"database.kdbx".to_vec()
+    }
 
     fn metadata(&self) -> FsFuture<'_, Box<dyn DavMetaData>> {
-        Box::pin(futures_util::future::ready(Ok(
-            Box::new(FileMeta { len: 0, modified: SystemTime::now() }) as Box<dyn DavMetaData>,
-        )))
+        Box::pin(futures_util::future::ready(Ok(Box::new(FileMeta {
+            len: 0,
+            modified: SystemTime::now(),
+        })
+            as Box<dyn DavMetaData>)))
     }
 }
 
@@ -116,9 +137,11 @@ struct ReadFile {
 impl DavFile for ReadFile {
     fn metadata(&mut self) -> FsFuture<'_, Box<dyn DavMetaData>> {
         let len = self.data.len() as u64;
-        Box::pin(futures_util::future::ready(Ok(
-            Box::new(FileMeta { len, modified: SystemTime::now() }) as Box<dyn DavMetaData>,
-        )))
+        Box::pin(futures_util::future::ready(Ok(Box::new(FileMeta {
+            len,
+            modified: SystemTime::now(),
+        })
+            as Box<dyn DavMetaData>)))
     }
 
     fn write_buf(&mut self, _buf: Box<dyn bytes::Buf + Send>) -> FsFuture<'_, ()> {
@@ -170,9 +193,11 @@ impl std::fmt::Debug for AppState {
 impl DavFile for WriteFile {
     fn metadata(&mut self) -> FsFuture<'_, Box<dyn DavMetaData>> {
         let len = self.buf.len() as u64;
-        Box::pin(futures_util::future::ready(Ok(
-            Box::new(FileMeta { len, modified: SystemTime::now() }) as Box<dyn DavMetaData>,
-        )))
+        Box::pin(futures_util::future::ready(Ok(Box::new(FileMeta {
+            len,
+            modified: SystemTime::now(),
+        })
+            as Box<dyn DavMetaData>)))
     }
 
     fn write_buf(&mut self, mut buf: Box<dyn bytes::Buf + Send>) -> FsFuture<'_, ()> {
@@ -206,18 +231,16 @@ impl DavFile for WriteFile {
 
         Box::pin(async move {
             let config = Arc::clone(&state.config);
-            let all_client_ids: Vec<String> =
-                config.clients.iter().map(|c| c.id.clone()).collect();
+            let all_client_ids: Vec<String> = config.clients.iter().map(|c| c.id.clone()).collect();
 
             // Parse KDBX bytes (blocking crypto work)
-            let storage =
-                spawn_blocking(move || parse_kdbx_sync(&bytes, &config.database))
-                    .await
-                    .map_err(|_| FsError::GeneralFailure)?
-                    .map_err(|e| {
-                        warn!("Client '{}': failed to parse KDBX: {e:#}", client_id);
-                        FsError::GeneralFailure
-                    })?;
+            let storage = spawn_blocking(move || parse_kdbx_sync(&bytes, &config.database))
+                .await
+                .map_err(|_| FsError::GeneralFailure)?
+                .map_err(|e| {
+                    warn!("Client '{}': failed to parse KDBX: {e:#}", client_id);
+                    FsError::Forbidden
+                })?;
 
             // Commit to git (serialised by the mutex)
             state
@@ -270,7 +293,11 @@ impl DavFileSystem for KdbxFs {
             }
 
             if options.write || options.create || options.create_new {
-                Ok(Box::new(WriteFile { buf: Vec::new(), state, client_id }) as Box<dyn DavFile>)
+                Ok(Box::new(WriteFile {
+                    buf: Vec::new(),
+                    state,
+                    client_id,
+                }) as Box<dyn DavFile>)
             } else {
                 // Generate KDBX bytes from the branch tip
                 let config = Arc::clone(&state.config);
@@ -286,16 +313,18 @@ impl DavFileSystem for KdbxFs {
                         .ok_or(FsError::NotFound)?
                 };
 
-                let bytes =
-                    spawn_blocking(move || build_kdbx_sync(&storage, &config.database))
-                        .await
-                        .map_err(|_| FsError::GeneralFailure)?
-                        .map_err(|e| {
-                            warn!("Client '{}': failed to build KDBX: {e:#}", client_id);
-                            FsError::GeneralFailure
-                        })?;
+                let bytes = spawn_blocking(move || build_kdbx_sync(&storage, &config.database))
+                    .await
+                    .map_err(|_| FsError::GeneralFailure)?
+                    .map_err(|e| {
+                        warn!("Client '{}': failed to build KDBX: {e:#}", client_id);
+                        FsError::GeneralFailure
+                    })?;
 
-                Ok(Box::new(ReadFile { data: Bytes::from(bytes), pos: 0 }) as Box<dyn DavFile>)
+                Ok(Box::new(ReadFile {
+                    data: Bytes::from(bytes),
+                    pos: 0,
+                }) as Box<dyn DavFile>)
             }
         })
     }
@@ -343,8 +372,10 @@ impl DavFileSystem for KdbxFs {
                     .is_some();
 
                 if exists {
-                    Ok(Box::new(FileMeta { len: 0, modified: SystemTime::now() })
-                        as Box<dyn DavMetaData>)
+                    Ok(Box::new(FileMeta {
+                        len: 0,
+                        modified: SystemTime::now(),
+                    }) as Box<dyn DavMetaData>)
                 } else {
                     Err(FsError::NotFound)
                 }
@@ -361,11 +392,7 @@ impl DavFileSystem for KdbxFs {
 #[derive(Clone)]
 struct AuthedClientId(String);
 
-async fn auth_middleware(
-    State(state): State<AppState>,
-    mut req: Request,
-    next: Next,
-) -> Response {
+async fn auth_middleware(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     let unauthorized = || -> Response {
         (
             StatusCode::UNAUTHORIZED,
@@ -402,9 +429,11 @@ async fn auth_middleware(
     };
 
     // Match credentials against the client in config
-    let found = state.config.clients.iter().any(|c| {
-        c.id == client_id && c.username == username && c.password == password
-    });
+    let found = state
+        .config
+        .clients
+        .iter()
+        .any(|c| c.id == client_id && c.username == username && c.password == password);
 
     if found {
         req.extensions_mut().insert(AuthedClientId(client_id));
@@ -443,29 +472,34 @@ async fn dav_handler(State(state): State<AppState>, req: Request) -> impl IntoRe
 
 // ── Server startup ─────────────────────────────────────────────────────────────
 
-pub async fn run_server(config: Config, store: GitStore) -> Result<()> {
-    let state = AppState {
-        store: Arc::new(Mutex::new(store)),
-        config: Arc::new(config),
-    };
-
-    let bind_addr = state.config.bind_addr.clone();
-
-    let app = Router::new()
+pub fn build_app(state: AppState) -> Router {
+    Router::new()
         .route("/dav/{*path}", any(dav_handler))
         .route("/dav", any(dav_handler))
         .route("/dav/", any(dav_handler))
-        .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
-        .with_state(state);
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
+        .with_state(state)
+}
+
+pub async fn serve_listener(listener: tokio::net::TcpListener, state: AppState) -> Result<()> {
+    axum::serve(listener, build_app(state))
+        .await
+        .wrap_err("server error")?;
+
+    Ok(())
+}
+
+pub async fn run_server(config: Config, store: GitStore) -> Result<()> {
+    let state = AppState::new(config, store);
+    let bind_addr = state.config.bind_addr.clone();
 
     info!("Listening on http://{bind_addr}");
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
         .wrap_err_with(|| format!("failed to bind to {bind_addr}"))?;
 
-    axum::serve(listener, app)
-        .await
-        .wrap_err("server error")?;
-
-    Ok(())
+    serve_listener(listener, state).await
 }

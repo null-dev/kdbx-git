@@ -23,8 +23,7 @@ fn dt_to_str(dt: NaiveDateTime) -> String {
 }
 
 fn str_to_dt(s: &str) -> Result<NaiveDateTime> {
-    NaiveDateTime::parse_from_str(s, DT_FMT)
-        .wrap_err_with(|| format!("invalid datetime: {s}"))
+    NaiveDateTime::parse_from_str(s, DT_FMT).wrap_err_with(|| format!("invalid datetime: {s}"))
 }
 
 fn opt_dt(dt: Option<NaiveDateTime>) -> Option<String> {
@@ -232,11 +231,7 @@ fn storage_to_group(s: &StorageGroup) -> Result<Group> {
         default_autotype_sequence: s.default_autotype_sequence.clone(),
         enable_autotype: s.enable_autotype,
         enable_searching: s.enable_searching,
-        last_top_visible_entry: s
-            .last_top_visible_entry
-            .as_deref()
-            .map(s2u)
-            .transpose()?,
+        last_top_visible_entry: s.last_top_visible_entry.as_deref().map(s2u).transpose()?,
         tags: s.tags.clone(),
         previous_parent_group: s.previous_parent_group.as_deref().map(s2u).transpose()?,
     })

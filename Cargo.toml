@@ -1,3 +1,43 @@
+[package]
+name = "kdbx-git"
+version = "0.1.0"
+edition = "2021"
+
 [profile.dev]
 split-debuginfo = "unpacked"
 
+[dependencies]
+# KeePass (custom fork with merge support)
+keepass = { git = "https://github.com/null-dev/keepass-nd", features = ["save_kdbx4", "_merge"] }
+
+# Git storage
+gix = "0.70"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+toml = "0.8"
+
+# HTTP / WebDAV
+axum = "0.8"
+dav-server = "0.11"
+
+# Error handling
+eyre = "0.6"
+color-eyre = "0.6"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"

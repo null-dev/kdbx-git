@@ -2,18 +2,17 @@
 
 ## Step 1 — Project Scaffolding & Dependencies
 
-- [ ] Initialize the Rust binary crate (`src/main.rs`) inside the workspace.
-- [ ] Populate `Cargo.toml` with all required dependencies:
-  - [ ] `gix` (gitoxide) for git storage
-  - [ ] `keepass-nd` as a git dependency from `https://github.com/null-dev/keepass-nd`
-  - [ ] `nuon` for NUON serialization
-  - [ ] `serde` + `serde_json` / `serde_yaml` / `toml` for alternate formats
-  - [ ] `axum` for the HTTP layer
-  - [ ] `dav-server` (dav-server-rs) for WebDAV
-  - [ ] `eyre` + `color-eyre` for error handling
-  - [ ] `tracing` + `tracing-subscriber` (with `env-filter`) for logging
-  - [ ] Supporting crates: `tokio`, `uuid`, `base64`, `rand`, etc.
-- [ ] Wire up `color_eyre` and `tracing_subscriber` in `main`.
+- [x] Initialize the Rust binary crate (`src/main.rs`) inside the workspace.
+- [x] Populate `Cargo.toml` with all required dependencies:
+  - [x] `gix` (gitoxide) for git storage
+  - [x] `keepass-nd` as a git dependency from `https://github.com/null-dev/keepass-nd`
+  - [x] `serde` + `serde_json` / `serde_yaml` / `toml` for alternate formats (NUON skipped — its crate does not integrate with serde)
+  - [x] `axum` for the HTTP layer
+  - [x] `dav-server` (dav-server-rs) for WebDAV
+  - [x] `eyre` + `color-eyre` for error handling
+  - [x] `tracing` + `tracing-subscriber` (with `env-filter`) for logging
+  - [x] Supporting crates: `tokio`, `uuid`, `base64`, `chrono`
+- [x] Wire up `color_eyre` and `tracing_subscriber` in `main`.
 
 ---
 
@@ -21,13 +20,13 @@
 
 Define and load server configuration (e.g., from a TOML file or env vars):
 
-- [ ] Path to the KDBX database file (used for initial import and as the encryption template).
-- [ ] Master password / key file for the KDBX database.
-- [ ] List of clients, each with:
-  - [ ] Unique client ID (becomes the branch name).
-  - [ ] WebDAV username & password.
-- [ ] HTTP bind address.
-- [ ] Path to the git storage directory.
+- [x] Path to the KDBX database file (used for initial import and as the encryption template).
+- [x] Master password / key file for the KDBX database.
+- [x] List of clients, each with:
+  - [x] Unique client ID (becomes the branch name).
+  - [x] WebDAV username & password.
+- [x] HTTP bind address.
+- [x] Path to the git storage directory.
 
 ---
 
@@ -35,9 +34,9 @@ Define and load server configuration (e.g., from a TOML file or env vars):
 
 Define Rust structs that mirror the KDBX database content (groups, entries, metadata, etc.) and implement conversion to/from the keepass-nd model.
 
-- [ ] Implement `db_to_nuon` / `nuon_to_db` (and JSON/YAML/TOML equivalents) so database state can round-trip through text.
-- [ ] The on-disk format is one text file per commit stored in the git object store (indented for human-readability and `git diff` friendliness).
-- [ ] Write unit tests for round-trip fidelity.
+- [x] Implement `db_to_storage` / `storage_to_db` with JSON/YAML/TOML so database state can round-trip through text.
+- [x] The on-disk format is one text file per commit stored in the git object store (indented for human-readability and `git diff` friendliness).
+- [x] Write unit tests for round-trip fidelity.
 
 ---
 
@@ -45,11 +44,11 @@ Define Rust structs that mirror the KDBX database content (groups, entries, meta
 
 Build a `GitStore` abstraction around gitoxide (`gix`):
 
-- [ ] **Initialize** a bare git repo on first run (or open an existing one).
-- [ ] **Read** a branch tip: deserialize the latest file blob on a branch into the in-memory database model.
-- [ ] **Write** a commit: serialize the in-memory model to text, create a tree + commit object, and advance the branch ref.
-- [ ] **Fast-forward check**: compare commit ancestry to decide if a merge can be skipped.
-- [ ] Keep operations `async`-friendly (run blocking gix calls inside `tokio::task::spawn_blocking`).
+- [x] **Initialize** a bare git repo on first run (or open an existing one).
+- [x] **Read** a branch tip: deserialize the latest file blob on a branch into the in-memory database model.
+- [x] **Write** a commit: serialize the in-memory model to text, create a tree + commit object, and advance the branch ref.
+- [x] **Fast-forward check**: compare commit ancestry to decide if a merge can be skipped.
+- [x] Keep operations `async`-friendly (run blocking gix calls inside `tokio::task::spawn_blocking`).
 
 ---
 

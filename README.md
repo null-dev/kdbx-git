@@ -54,7 +54,7 @@ Start the server:
 cargo run -- config.toml
 ```
 
-Keep a local file in sync with a client branch:
+Keep a local file in sync with a client branch through the running server:
 
 ```bash
 cargo run -- sync-local config.toml laptop ./laptop.kdbx
@@ -63,7 +63,7 @@ cargo run -- sync-local config.toml laptop ./laptop.kdbx
 Useful options:
 
 - `--once`: perform a single reconciliation and exit
-- `--interval-secs N`: change the polling interval for long-running sync
+- `--server-url URL`: connect to a different running server URL instead of inferring one from `bind_addr`
 
 Examples:
 
@@ -71,8 +71,8 @@ Examples:
 # Pull or push once, then exit
 cargo run -- sync-local --once config.toml laptop ./laptop.kdbx
 
-# Run continuously, checking every 10 seconds
-cargo run -- sync-local --interval-secs 10 config.toml laptop ./laptop.kdbx
+# Connect to a separately hosted server instance
+cargo run -- sync-local --server-url https://vault.example.com config.toml laptop ./laptop.kdbx
 ```
 
 ## KeePass Client Setup
@@ -87,11 +87,12 @@ The database's master password/key file is still the KDBX master credential from
 
 ## Local File Sync
 
-`sync-local` watches a local `.kdbx` file and a single client branch:
+`sync-local` keeps a local `.kdbx` file and a single client branch in sync through the server:
 
-- if only the branch changed, it rewrites the local file
-- if only the local file changed, it commits that state to the client branch
-- if both diverged, it runs the same KeePass-level merge logic and updates both sides
+- it downloads/uploads through the same authenticated server endpoints the clients use
+- remote branch changes are pushed to the CLI through a server event stream
+- local file changes are picked up from filesystem notifications, with a small safety-net detector to catch missed updates
+- if both sides diverge, it runs the same KeePass-level merge logic and updates both sides
 
 This is useful if you want branch-backed syncing without mounting WebDAV in your desktop workflow.
 

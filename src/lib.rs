@@ -24,12 +24,12 @@ pub enum CliCommand {
         client_id: String,
         local_path: PathBuf,
         once: bool,
-        interval_secs: u64,
+        server_url: Option<String>,
     },
 }
 
 fn usage() -> &'static str {
-    "usage: kdbx-git [config.toml]\n       kdbx-git --init [config.toml]\n       kdbx-git sync-local [--once] [--interval-secs N] [config.toml] <client-id> <local.kdbx>"
+    "usage: kdbx-git [config.toml]\n       kdbx-git --init [config.toml]\n       kdbx-git sync-local [--once] [--server-url URL] [config.toml] <client-id> <local.kdbx>"
 }
 
 pub fn init_observability() -> Result<()> {
@@ -80,7 +80,7 @@ where
 
 fn parse_sync_local_args(args: &[String]) -> Result<CliCommand> {
     let mut once = false;
-    let mut interval_secs = 2_u64;
+    let mut server_url = None;
     let mut positionals = Vec::new();
     let mut i = 0;
 
@@ -90,26 +90,16 @@ fn parse_sync_local_args(args: &[String]) -> Result<CliCommand> {
                 once = true;
                 i += 1;
             }
-            "--interval-secs" => {
+            "--server-url" => {
                 let value = args
                     .get(i + 1)
-                    .ok_or_else(|| eyre::eyre!("--interval-secs requires a value"))?;
-                interval_secs = value
-                    .parse()
-                    .map_err(|_| eyre::eyre!("invalid --interval-secs value: {value}"))?;
-                if interval_secs == 0 {
-                    bail!("--interval-secs must be at least 1");
-                }
+                    .ok_or_else(|| eyre::eyre!("--server-url requires a value"))?;
+                server_url = Some(value.clone());
                 i += 2;
             }
-            value if value.starts_with("--interval-secs=") => {
+            value if value.starts_with("--server-url=") => {
                 let (_, raw) = value.split_once('=').unwrap();
-                interval_secs = raw
-                    .parse()
-                    .map_err(|_| eyre::eyre!("invalid --interval-secs value: {raw}"))?;
-                if interval_secs == 0 {
-                    bail!("--interval-secs must be at least 1");
-                }
+                server_url = Some(raw.to_string());
                 i += 1;
             }
             value if value.starts_with('-') => bail!("unknown sync-local flag: {value}"),
@@ -139,7 +129,7 @@ fn parse_sync_local_args(args: &[String]) -> Result<CliCommand> {
         client_id,
         local_path,
         once,
-        interval_secs,
+        server_url,
     })
 }
 
@@ -157,7 +147,7 @@ where
             client_id,
             local_path,
             once,
-            interval_secs,
+            server_url,
         } => {
             sync::sync_local_from_config_path(
                 &config_path,
@@ -165,7 +155,7 @@ where
                     client_id,
                     local_path,
                     once,
-                    interval_secs,
+                    server_url,
                 },
             )
             .await
@@ -222,7 +212,7 @@ mod tests {
                 client_id: "alice".into(),
                 local_path: PathBuf::from("alice.kdbx"),
                 once: false,
-                interval_secs: 2,
+                server_url: None,
             }
         );
     }
@@ -234,8 +224,8 @@ mod tests {
                 "kdbx-git".into(),
                 "sync-local".into(),
                 "--once".into(),
-                "--interval-secs".into(),
-                "5".into(),
+                "--server-url".into(),
+                "https://example.test".into(),
                 "custom.toml".into(),
                 "alice".into(),
                 "alice.kdbx".into(),
@@ -246,7 +236,7 @@ mod tests {
                 client_id: "alice".into(),
                 local_path: PathBuf::from("alice.kdbx"),
                 once: true,
-                interval_secs: 5,
+                server_url: Some("https://example.test".into()),
             }
         );
     }

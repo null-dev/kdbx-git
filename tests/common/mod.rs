@@ -42,6 +42,10 @@ impl TestServer {
             handle,
         })
     }
+
+    pub fn temp_root(&self) -> &Path {
+        self._tempdir.path()
+    }
 }
 
 impl Drop for TestServer {

@@ -502,7 +502,9 @@ impl GitStore {
         client_branch: String,
         storage: StorageDatabase,
         all_client_branches: Vec<String>,
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
+        let mut updated_branches = vec![client_branch.clone()];
+
         // 1. Commit new state to client's own branch
         let msg = format!("write from client '{client_branch}'");
         self.commit_to_branch(client_branch.clone(), storage, msg)
@@ -519,23 +521,26 @@ impl GitStore {
             });
 
         if !merged_main {
-            return Ok(());
+            return Ok(updated_branches);
         }
+        updated_branches.push(MAIN_BRANCH.to_string());
 
         // 3. Fan out: merge main → all other client branches
         for other in all_client_branches
             .iter()
             .filter(|b| b.as_str() != client_branch.as_str())
         {
-            if let Err(e) = self
+            match self
                 .merge_branch_into(MAIN_BRANCH.to_string(), other.clone())
                 .await
             {
-                warn!("Failed to merge {MAIN_BRANCH} into '{other}': {e:#}");
+                Ok(true) => updated_branches.push(other.clone()),
+                Ok(false) => {}
+                Err(e) => warn!("Failed to merge {MAIN_BRANCH} into '{other}': {e:#}"),
             }
         }
 
-        Ok(())
+        Ok(updated_branches)
     }
 }
 

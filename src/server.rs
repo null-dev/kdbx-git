@@ -22,13 +22,16 @@
 //! 4. **[`AppState`]** wraps [`GitStore`] in `Arc<tokio::sync::Mutex<...>>`
 //!    (step 8) so concurrent writes are serialised.
 
-use std::{io::SeekFrom, sync::Arc, time::SystemTime};
+use std::{collections::HashMap, convert::Infallible, io::SeekFrom, sync::Arc, time::SystemTime};
 
 use axum::{
     extract::{Request, State},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
-    routing::any,
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
+    routing::{any, get},
     Router,
 };
 use base64::{engine::general_purpose::STANDARD as B64_STANDARD, Engine};
@@ -42,9 +45,12 @@ use dav_server::{
     DavHandler,
 };
 use eyre::{Context, Result};
-use futures_util::stream;
+use futures_util::{stream, StreamExt};
 use http::{header, StatusCode};
-use tokio::{sync::Mutex, task::spawn_blocking};
+use tokio::{
+    sync::{watch, Mutex},
+    task::spawn_blocking,
+};
 use tracing::{info, warn};
 
 use crate::{
@@ -60,13 +66,38 @@ use crate::{
 pub struct AppState {
     pub store: Arc<Mutex<GitStore>>,
     pub config: Arc<Config>,
+    branch_notifications: Arc<HashMap<String, watch::Sender<u64>>>,
 }
 
 impl AppState {
     pub fn new(config: Config, store: GitStore) -> Self {
+        let branch_notifications = config
+            .clients
+            .iter()
+            .map(|client| {
+                let (tx, _rx) = watch::channel(0_u64);
+                (client.id.clone(), tx)
+            })
+            .collect();
+
         Self {
             store: Arc::new(Mutex::new(store)),
             config: Arc::new(config),
+            branch_notifications: Arc::new(branch_notifications),
+        }
+    }
+
+    fn subscribe_branch_notifications(&self, client_id: &str) -> Option<watch::Receiver<u64>> {
+        self.branch_notifications
+            .get(client_id)
+            .map(watch::Sender::subscribe)
+    }
+
+    fn notify_branches<'a>(&self, branch_ids: impl IntoIterator<Item = &'a String>) {
+        for branch_id in branch_ids {
+            if let Some(tx) = self.branch_notifications.get(branch_id) {
+                tx.send_modify(|version| *version += 1);
+            }
         }
     }
 }
@@ -249,6 +280,9 @@ impl DavFile for WriteFile {
                 .await
                 .process_client_write(client_id.clone(), storage, all_client_ids)
                 .await
+                .map(|updated_branches| {
+                    state.notify_branches(updated_branches.iter());
+                })
                 .map_err(|e| {
                     warn!("Client '{}': git write failed: {e:#}", client_id);
                     FsError::GeneralFailure
@@ -403,11 +437,7 @@ async fn auth_middleware(State(state): State<AppState>, mut req: Request, next: 
 
     // Extract client_id from path: /dav/{client_id}/...
     let path = req.uri().path().to_owned();
-    let client_id = path
-        .strip_prefix("/dav/")
-        .and_then(|s| s.split('/').next())
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned);
+    let client_id = extract_client_id_from_path(&path);
 
     let client_id = match client_id {
         Some(id) => id,
@@ -443,6 +473,15 @@ async fn auth_middleware(State(state): State<AppState>, mut req: Request, next: 
     }
 }
 
+fn extract_client_id_from_path(path: &str) -> Option<String> {
+    ["/dav/", "/sync/"].into_iter().find_map(|prefix| {
+        path.strip_prefix(prefix)
+            .and_then(|s| s.split('/').next())
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    })
+}
+
 // ── WebDAV request handler ─────────────────────────────────────────────────────
 
 async fn dav_handler(State(state): State<AppState>, req: Request) -> impl IntoResponse {
@@ -470,6 +509,47 @@ async fn dav_handler(State(state): State<AppState>, req: Request) -> impl IntoRe
     dav.handle(req).await.into_response()
 }
 
+async fn sync_events_handler(State(state): State<AppState>, req: Request) -> impl IntoResponse {
+    let client_id = match req.extensions().get::<AuthedClientId>() {
+        Some(id) => id.0.clone(),
+        None => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+
+    {
+        let store = state.store.lock().await;
+        if let Err(e) = store.ensure_client_branch(client_id.clone()).await {
+            warn!("Failed to ensure branch for '{}': {e:#}", client_id);
+        }
+    }
+
+    let Some(receiver) = state.subscribe_branch_notifications(&client_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let initial =
+        stream::once(async { Ok::<Event, Infallible>(Event::default().event("ready").data("0")) });
+    let updates = stream::unfold(receiver, |mut receiver| async move {
+        match receiver.changed().await {
+            Ok(()) => {
+                let version = *receiver.borrow_and_update();
+                Some((
+                    Ok::<Event, Infallible>(
+                        Event::default()
+                            .event("branch-updated")
+                            .data(version.to_string()),
+                    ),
+                    receiver,
+                ))
+            }
+            Err(_) => None,
+        }
+    });
+
+    Sse::new(initial.chain(updates))
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
 // ── Server startup ─────────────────────────────────────────────────────────────
 
 pub fn build_app(state: AppState) -> Router {
@@ -477,6 +557,7 @@ pub fn build_app(state: AppState) -> Router {
         .route("/dav/{*path}", any(dav_handler))
         .route("/dav", any(dav_handler))
         .route("/dav/", any(dav_handler))
+        .route("/sync/{client_id}/events", get(sync_events_handler))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,

@@ -16,7 +16,7 @@
 //!    file `/database.kdbx`:
 //!    - `metadata("/")` → root collection
 //!    - `metadata("/database.kdbx")` → file exists iff the branch has commits
-//!    - `open(read)` → build KDBX bytes from the branch tip
+//!    - `open(read)` → merge main into the client branch, then build KDBX bytes
 //!    - `open(write)` → accumulate bytes; on `flush`, decrypt and write to git
 //!
 //! 4. **[`AppState`]** wraps [`GitStore`] in `Arc<tokio::sync::Mutex<...>>`
@@ -25,13 +25,13 @@
 use std::{collections::HashMap, convert::Infallible, io::SeekFrom, sync::Arc, time::SystemTime};
 
 use axum::{
-    extract::{Request, State},
+    extract::{Path, Query, Request, State},
     middleware::{self, Next},
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
     },
-    routing::{any, get},
+    routing::{any, get, post},
     Router,
 };
 use base64::{engine::general_purpose::STANDARD as B64_STANDARD, Engine};
@@ -46,7 +46,9 @@ use dav_server::{
 };
 use eyre::{Context, Result};
 use futures_util::{stream, StreamExt};
+use gix::ObjectId;
 use http::{header, StatusCode};
+use serde::Deserialize;
 use tokio::{
     sync::{watch, Mutex},
     task::spawn_blocking,
@@ -56,7 +58,7 @@ use tracing::{info, warn};
 use crate::{
     config::Config,
     kdbx::{build_kdbx_sync, parse_kdbx_sync},
-    store::GitStore,
+    store::{BranchConflictError, GitStore, MAIN_BRANCH},
 };
 
 // ── AppState (step 8) ─────────────────────────────────────────────────────────
@@ -66,12 +68,14 @@ use crate::{
 pub struct AppState {
     pub store: Arc<Mutex<GitStore>>,
     pub config: Arc<Config>,
+    /// Per-branch notification channels.  Includes an entry for `MAIN_BRANCH`
+    /// so sync-local clients can be notified when main advances.
     branch_notifications: Arc<HashMap<String, watch::Sender<u64>>>,
 }
 
 impl AppState {
     pub fn new(config: Config, store: GitStore) -> Self {
-        let branch_notifications = config
+        let mut branch_notifications: HashMap<String, watch::Sender<u64>> = config
             .clients
             .iter()
             .map(|client| {
@@ -80,6 +84,11 @@ impl AppState {
             })
             .collect();
 
+        // Add a channel for the main branch so sync-local clients are notified
+        // when main advances after any client write.
+        let (main_tx, _) = watch::channel(0_u64);
+        branch_notifications.insert(MAIN_BRANCH.to_string(), main_tx);
+
         Self {
             store: Arc::new(Mutex::new(store)),
             config: Arc::new(config),
@@ -87,9 +96,9 @@ impl AppState {
         }
     }
 
-    fn subscribe_branch_notifications(&self, client_id: &str) -> Option<watch::Receiver<u64>> {
+    fn subscribe_branch_notifications(&self, branch_id: &str) -> Option<watch::Receiver<u64>> {
         self.branch_notifications
-            .get(client_id)
+            .get(branch_id)
             .map(watch::Sender::subscribe)
     }
 
@@ -262,7 +271,6 @@ impl DavFile for WriteFile {
 
         Box::pin(async move {
             let config = Arc::clone(&state.config);
-            let all_client_ids: Vec<String> = config.clients.iter().map(|c| c.id.clone()).collect();
 
             // Parse KDBX bytes (blocking crypto work)
             let storage = spawn_blocking(move || parse_kdbx_sync(&bytes, &config.database))
@@ -278,7 +286,7 @@ impl DavFile for WriteFile {
                 .store
                 .lock()
                 .await
-                .process_client_write(client_id.clone(), storage, all_client_ids)
+                .process_client_write(client_id.clone(), storage)
                 .await
                 .map(|updated_branches| {
                     state.notify_branches(updated_branches.iter());
@@ -333,7 +341,26 @@ impl DavFileSystem for KdbxFs {
                     client_id,
                 }) as Box<dyn DavFile>)
             } else {
-                // Generate KDBX bytes from the branch tip
+                // Merge main into the client branch first, so the client always
+                // sees the latest merged state.  Failure is non-fatal.
+                {
+                    let store = state.store.lock().await;
+                    match store.merge_main_into_branch(client_id.clone()).await {
+                        Ok(true) => {
+                            // Notify main-branch subscribers (no-op if none).
+                            state.notify_branches([&MAIN_BRANCH.to_string()]);
+                        }
+                        Ok(false) => {} // already up to date
+                        Err(e) => {
+                            warn!(
+                                "Client '{}': failed to merge main on read (serving stale data): {e:#}",
+                                client_id
+                            );
+                        }
+                    }
+                }
+
+                // Generate KDBX bytes from the branch tip.
                 let config = Arc::clone(&state.config);
                 let storage = {
                     let store = state.store.lock().await;
@@ -435,7 +462,7 @@ async fn auth_middleware(State(state): State<AppState>, mut req: Request, next: 
             .into_response()
     };
 
-    // Extract client_id from path: /dav/{client_id}/...
+    // Extract client_id from path: /dav/{client_id}/... or /sync/{client_id}/...
     let path = req.uri().path().to_owned();
     let client_id = extract_client_id_from_path(&path);
 
@@ -509,6 +536,10 @@ async fn dav_handler(State(state): State<AppState>, req: Request) -> impl IntoRe
     dav.handle(req).await.into_response()
 }
 
+// ── Sync-local event stream ────────────────────────────────────────────────────
+
+/// SSE stream that fires whenever `main` advances.  Used by sync-local clients
+/// to know when to pull a new merge from the server.
 async fn sync_events_handler(State(state): State<AppState>, req: Request) -> impl IntoResponse {
     let client_id = match req.extensions().get::<AuthedClientId>() {
         Some(id) => id.0.clone(),
@@ -522,8 +553,9 @@ async fn sync_events_handler(State(state): State<AppState>, req: Request) -> imp
         }
     }
 
-    let Some(receiver) = state.subscribe_branch_notifications(&client_id) else {
-        return StatusCode::NOT_FOUND.into_response();
+    // Subscribe to main-branch notifications.
+    let Some(receiver) = state.subscribe_branch_notifications(MAIN_BRANCH) else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
 
     let initial =
@@ -550,6 +582,146 @@ async fn sync_events_handler(State(state): State<AppState>, req: Request) -> imp
         .into_response()
 }
 
+// ── Sync-local merge endpoints ────────────────────────────────────────────────
+
+/// `POST /sync/{client_id}/merge-from-main`
+///
+/// Creates a temporary merge commit that merges `main` into the client's branch
+/// and returns the resulting KDBX bytes.
+///
+/// Response headers:
+/// - `X-Merge-Commit-Id`: hex OID of the temporary commit
+/// - `X-Expected-Branch-Tip`: hex OID of the client branch tip at merge time,
+///   or `"none"` if the branch did not exist
+///
+/// Returns **204 No Content** when there is nothing to merge (the client branch
+/// already contains `main`).
+async fn sync_merge_from_main_handler(
+    State(state): State<AppState>,
+    req: Request,
+) -> impl IntoResponse {
+    let client_id = match req.extensions().get::<AuthedClientId>() {
+        Some(id) => id.0.clone(),
+        None => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+
+    let result = {
+        let store = state.store.lock().await;
+        store.create_sync_merge_commit(client_id.clone()).await
+    };
+
+    match result {
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Some(merge_result)) => {
+            let config = Arc::clone(&state.config);
+            let commit_id = merge_result.commit_id.to_hex().to_string();
+            let expected_tip = match merge_result.expected_branch_tip {
+                Some(id) => id.to_hex().to_string(),
+                None => "none".to_string(),
+            };
+            let storage = merge_result.storage;
+
+            match spawn_blocking(move || build_kdbx_sync(&storage, &config.database)).await {
+                Ok(Ok(bytes)) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/octet-stream")
+                    .header("X-Merge-Commit-Id", &commit_id)
+                    .header("X-Expected-Branch-Tip", &expected_tip)
+                    .body(axum::body::Body::from(bytes))
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+                Ok(Err(e)) => {
+                    warn!("sync merge-from-main: failed to build KDBX for '{}': {e:#}", client_id);
+                    StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                }
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+        Err(e) => {
+            warn!("sync merge-from-main: failed for '{}': {e:#}", client_id);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// Path params for the promote-merge route.
+#[derive(Deserialize)]
+struct PromoteMergePathParams {
+    #[allow(dead_code)]
+    client_id: String,
+    commit_id: String,
+}
+
+/// Query params for the promote-merge route.
+#[derive(Deserialize)]
+struct PromoteMergeQuery {
+    /// Hex OID of the branch tip that was current when the merge was created,
+    /// or `"none"` if the branch did not exist.
+    #[serde(rename = "expected-tip")]
+    expected_tip: String,
+}
+
+/// `POST /sync/{client_id}/promote-merge/{commit_id}?expected-tip=<hex|none>`
+///
+/// Promotes the temporary merge commit created by `merge-from-main` onto the
+/// client's branch.  The `expected-tip` query parameter must match the branch
+/// tip that was current when `merge-from-main` was called.
+///
+/// Returns **409 Conflict** if the branch was modified unexpectedly.
+async fn sync_promote_merge_handler(
+    State(state): State<AppState>,
+    Path(PromoteMergePathParams { commit_id: commit_id_str, .. }): Path<PromoteMergePathParams>,
+    Query(query): Query<PromoteMergeQuery>,
+    req: Request,
+) -> impl IntoResponse {
+    let client_id = match req.extensions().get::<AuthedClientId>() {
+        Some(id) => id.0.clone(),
+        None => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+
+    let commit_id = match ObjectId::from_hex(commit_id_str.as_bytes()) {
+        Ok(id) => id,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+
+    let expected_branch_tip: Option<ObjectId> = if query.expected_tip == "none" {
+        None
+    } else {
+        match ObjectId::from_hex(query.expected_tip.as_bytes()) {
+            Ok(id) => Some(id),
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        }
+    };
+
+    let result = {
+        let store = state.store.lock().await;
+        store
+            .promote_sync_merge_commit(client_id.clone(), commit_id, expected_branch_tip)
+            .await
+    };
+
+    match result {
+        Ok(()) => {
+            // Notify the client's own branch channel (branch was updated).
+            state.notify_branches([&client_id]);
+            StatusCode::OK.into_response()
+        }
+        Err(e) if e.downcast_ref::<BranchConflictError>().is_some() => {
+            warn!(
+                "sync promote-merge: branch conflict for '{}': {e:#}",
+                client_id
+            );
+            StatusCode::CONFLICT.into_response()
+        }
+        Err(e) => {
+            warn!(
+                "sync promote-merge: failed for '{}': {e:#}",
+                client_id
+            );
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
 // ── Server startup ─────────────────────────────────────────────────────────────
 
 pub fn build_app(state: AppState) -> Router {
@@ -558,6 +730,14 @@ pub fn build_app(state: AppState) -> Router {
         .route("/dav", any(dav_handler))
         .route("/dav/", any(dav_handler))
         .route("/sync/{client_id}/events", get(sync_events_handler))
+        .route(
+            "/sync/{client_id}/merge-from-main",
+            post(sync_merge_from_main_handler),
+        )
+        .route(
+            "/sync/{client_id}/promote-merge/{commit_id}",
+            post(sync_promote_merge_handler),
+        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,

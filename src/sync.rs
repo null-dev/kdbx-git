@@ -1,6 +1,4 @@
 use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
     time::Duration,
@@ -8,32 +6,23 @@ use std::{
 
 use color_eyre::eyre::{bail, Context, Result};
 use futures_util::StreamExt;
-use notify::event::{EventKind, MetadataKind, ModifyKind};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use reqwest::{header, Client, StatusCode};
+use serde::{Deserialize, Serialize};
 use tokio::{
     fs,
     sync::{mpsc, oneshot},
-    task::spawn_blocking,
     time::sleep,
 };
 use tracing::{info, warn};
 
-use crate::{
-    config::{ClientConfig, Config},
-    kdbx::{build_kdbx_sync, parse_kdbx_sync},
-    storage::{
-        format::{serialize, StorageFormat},
-        types::StorageDatabase,
-    },
-    store::merge_databases,
-};
+use crate::config::{ClientConfig, Config};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncLocalOptions {
     pub client_id: String,
     pub local_path: PathBuf,
     pub once: bool,
+    /// Retained for CLI compatibility but unused in the new pull-only design.
     pub poll: bool,
     pub server_url: Option<String>,
 }
@@ -41,17 +30,44 @@ pub struct SyncLocalOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SyncTrigger {
     Startup,
-    LocalChange,
-    RemoteChange,
+    MainChanged,
 }
 
-#[derive(Debug, Clone)]
-struct SyncSnapshot {
-    remote_storage: Option<StorageDatabase>,
-    remote_sig: Option<u64>,
-    local_storage: Option<StorageDatabase>,
-    local_sig: Option<u64>,
+// ── Interrupt-recovery state file ────────────────────────────────────────────
+
+/// Persisted alongside the local KDBX file as `<local_path>.sync-state.json`.
+/// If `pending_promote` is `Some`, the program was interrupted after writing
+/// the local file but before promoting the merge commit.  On next startup the
+/// promote is retried.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct SyncState {
+    pending_promote: Option<PendingPromote>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingPromote {
+    /// Hex OID of the temporary merge commit to promote.
+    commit_id: String,
+    /// Hex OID of the branch tip that was current when the merge was created,
+    /// or `None` if the branch did not exist yet.
+    expected_branch_tip: Option<String>,
+}
+
+/// Returned when the server signals a branch conflict (409) during promote.
+#[derive(Debug)]
+struct BranchConflictError;
+
+impl std::fmt::Display for BranchConflictError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "branch was modified unexpectedly; sync-local is exiting"
+        )
+    }
+}
+impl std::error::Error for BranchConflictError {}
+
+// ── Public entry points ───────────────────────────────────────────────────────
 
 pub async fn sync_local_from_config_path(
     config_path: &Path,
@@ -94,7 +110,10 @@ async fn run_sync_local(
         .build()
         .wrap_err("failed to build HTTP client")?;
 
-    let mut syncer = RemoteSyncer::new(config, client, http, base_url, options);
+    let mut syncer = RemoteSyncer::new(client, http, base_url, options);
+
+    // On startup: handle any pending promote from a previous interrupted run,
+    // then perform an initial merge-from-main.
     syncer.reconcile(SyncTrigger::Startup).await?;
 
     if syncer.options.once {
@@ -104,250 +123,260 @@ async fn run_sync_local(
         return Ok(());
     }
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let watcher = start_local_watcher(syncer.options.local_path.clone(), tx.clone()).await?;
+    let (tx, mut rx) = mpsc::unbounded_channel::<SyncTrigger>();
     let remote_task = tokio::spawn(run_remote_event_listener(
         syncer.http.clone(),
         syncer.events_url(),
         syncer.client.username.clone(),
         syncer.client.password.clone(),
-        tx.clone(),
+        tx,
     ));
-    let local_probe = syncer.options.poll.then(|| {
-        tokio::spawn(run_local_change_probe(
-            syncer.options.local_path.clone(),
-            tx.clone(),
-        ))
-    });
 
-    let _watcher = watcher;
     if let Some(ready) = ready {
         let _ = ready.send(());
     }
 
     while let Some(trigger) = rx.recv().await {
-        if trigger == SyncTrigger::LocalChange {
-            // Let the writer finish flushing the local file before we parse it.
-            sleep(Duration::from_millis(400)).await;
-        }
-
-        if let Err(err) = syncer.reconcile(trigger).await {
-            warn!("sync-local '{}': {err:#}", syncer.options.client_id);
-            if trigger == SyncTrigger::LocalChange {
-                let retry_tx = tx.clone();
-                tokio::spawn(async move {
-                    sleep(Duration::from_millis(300)).await;
-                    let _ = retry_tx.send(SyncTrigger::LocalChange);
-                });
+        match syncer.reconcile(trigger).await {
+            Ok(()) => {}
+            Err(e) if e.downcast_ref::<BranchConflictError>().is_some() => {
+                // Fatal: branch was modified unexpectedly.
+                remote_task.abort();
+                return Err(e);
+            }
+            Err(e) => {
+                warn!("sync-local '{}': {e:#}", syncer.options.client_id);
             }
         }
     }
 
     remote_task.abort();
-    if let Some(local_probe) = local_probe {
-        local_probe.abort();
-    }
     Ok(())
 }
 
+// ── RemoteSyncer ──────────────────────────────────────────────────────────────
+
 struct RemoteSyncer {
-    config: Config,
     client: ClientConfig,
     http: Client,
     base_url: String,
     options: SyncLocalOptions,
-    last_remote_sig: Option<u64>,
-    last_local_sig: Option<u64>,
+    /// Path to the JSON state file used for interrupt recovery.
+    state_path: PathBuf,
 }
 
 impl RemoteSyncer {
-    fn new(
-        config: Config,
-        client: ClientConfig,
-        http: Client,
-        base_url: String,
-        options: SyncLocalOptions,
-    ) -> Self {
+    fn new(client: ClientConfig, http: Client, base_url: String, options: SyncLocalOptions) -> Self {
+        let state_path = PathBuf::from(format!("{}.sync-state.json", options.local_path.display()));
         Self {
-            config,
             client,
             http,
             base_url: base_url.trim_end_matches('/').to_string(),
+            state_path,
             options,
-            last_remote_sig: None,
-            last_local_sig: None,
         }
-    }
-
-    fn dav_url(&self) -> String {
-        format!(
-            "{}/dav/{}/database.kdbx",
-            self.base_url, self.options.client_id
-        )
     }
 
     fn events_url(&self) -> String {
         format!("{}/sync/{}/events", self.base_url, self.options.client_id)
     }
 
-    async fn reconcile(&mut self, trigger: SyncTrigger) -> Result<()> {
-        let snapshot = self.read_snapshot().await?;
+    fn merge_from_main_url(&self) -> String {
+        format!(
+            "{}/sync/{}/merge-from-main",
+            self.base_url, self.options.client_id
+        )
+    }
 
-        match (
-            snapshot.remote_storage.as_ref(),
-            snapshot.local_storage.as_ref(),
-        ) {
-            (None, None) => {
-                info!(
-                    "sync-local '{}': both branch and local file are empty",
-                    self.options.client_id
-                );
-            }
-            (Some(remote), None) => {
-                info!(
-                    "sync-local '{}': writing server state to {}",
-                    self.options.client_id,
-                    self.options.local_path.display()
-                );
-                self.write_local_file(remote).await?;
-            }
-            (None, Some(local)) => {
-                info!(
-                    "sync-local '{}': uploading local file to server",
-                    self.options.client_id
-                );
-                self.push_remote(local.clone()).await?;
-            }
-            (Some(remote), Some(local)) => {
-                if snapshot.remote_sig == snapshot.local_sig {
-                    info!(
-                        "sync-local '{}': local file and server already match",
-                        self.options.client_id
-                    );
-                } else {
-                    let remote_changed = snapshot.remote_sig != self.last_remote_sig;
-                    let local_changed = snapshot.local_sig != self.last_local_sig;
+    fn promote_merge_url(&self, commit_id: &str, expected_tip: &str) -> String {
+        format!(
+            "{}/sync/{}/promote-merge/{}?expected-tip={}",
+            self.base_url, self.options.client_id, commit_id, expected_tip
+        )
+    }
 
-                    match trigger {
-                        SyncTrigger::RemoteChange if !local_changed => {
-                            info!(
-                                "sync-local '{}': applying remote change to local file",
-                                self.options.client_id
-                            );
-                            self.write_local_file(remote).await?;
-                        }
-                        SyncTrigger::LocalChange if !remote_changed => {
-                            info!(
-                                "sync-local '{}': uploading local change to server",
-                                self.options.client_id
-                            );
-                            self.push_remote(local.clone()).await?;
-                        }
-                        _ if remote_changed && !local_changed => {
-                            info!(
-                                "sync-local '{}': applying remote change to local file",
-                                self.options.client_id
-                            );
-                            self.write_local_file(remote).await?;
-                        }
-                        _ if local_changed && !remote_changed => {
-                            info!(
-                                "sync-local '{}': uploading local change to server",
-                                self.options.client_id
-                            );
-                            self.push_remote(local.clone()).await?;
-                        }
-                        _ => {
-                            warn!(
-                                "sync-local '{}': local file and server diverged, merging both",
-                                self.options.client_id
-                            );
-                            let merged = merge_databases(remote, local)?;
-                            self.push_remote(merged.clone()).await?;
-                            self.write_local_file(&merged).await?;
-                        }
-                    }
-                }
+    // ── State file helpers ────────────────────────────────────────────────────
+
+    async fn load_state(&self) -> SyncState {
+        match fs::read_to_string(&self.state_path).await {
+            Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+            Err(_) => SyncState::default(),
+        }
+    }
+
+    async fn save_state(&self, state: &SyncState) {
+        let text = match serde_json::to_string(state) {
+            Ok(t) => t,
+            Err(e) => {
+                warn!("sync-local: failed to serialise state: {e}");
+                return;
             }
+        };
+        if let Err(e) = fs::write(&self.state_path, text).await {
+            warn!("sync-local: failed to write state file: {e}");
+        }
+    }
+
+    // ── Core reconciliation ───────────────────────────────────────────────────
+
+    /// Handle a sync trigger.
+    ///
+    /// 1. If a promote is pending (interrupted run), retry it.
+    /// 2. Request a new merge commit from the server.
+    /// 3. If there is something to merge: write the KDBX atomically, persist
+    ///    the pending promote, then promote.
+    async fn reconcile(&mut self, _trigger: SyncTrigger) -> Result<()> {
+        // Step 1 – recover from a previous interrupted promote.
+        let state = self.load_state().await;
+        if let Some(pending) = state.pending_promote {
+            info!(
+                "sync-local '{}': resuming interrupted promote {}",
+                self.options.client_id, pending.commit_id
+            );
+            self.do_promote(&pending.commit_id, pending.expected_branch_tip.as_deref())
+                .await?;
+            self.save_state(&SyncState { pending_promote: None }).await;
         }
 
-        let refreshed = self.read_snapshot().await?;
-        self.last_remote_sig = refreshed.remote_sig;
-        self.last_local_sig = refreshed.local_sig;
+        // Step 2 – request a fresh merge from the server.
+        let merge = self.request_merge_from_main().await?;
+
+        let Some((kdbx_bytes, commit_id, expected_tip)) = merge else {
+            info!(
+                "sync-local '{}': already up to date with main",
+                self.options.client_id
+            );
+            return Ok(());
+        };
+
+        info!(
+            "sync-local '{}': writing merged database (commit {})",
+            self.options.client_id, commit_id
+        );
+
+        // Step 3a – atomically write the local KDBX file.
+        self.write_local_file_atomic(&kdbx_bytes).await?;
+
+        // Step 3b – persist pending promote so we can recover if interrupted.
+        self.save_state(&SyncState {
+            pending_promote: Some(PendingPromote {
+                commit_id: commit_id.clone(),
+                expected_branch_tip: expected_tip.clone(),
+            }),
+        })
+        .await;
+
+        // Step 3c – promote the merge commit onto the client branch (retries on
+        //           transient errors; fatal on 409 Conflict).
+        self.do_promote(&commit_id, expected_tip.as_deref()).await?;
+
+        self.save_state(&SyncState { pending_promote: None }).await;
+
+        info!(
+            "sync-local '{}': merge promoted successfully",
+            self.options.client_id
+        );
         Ok(())
     }
 
-    async fn read_snapshot(&self) -> Result<SyncSnapshot> {
-        let remote_storage = self.fetch_remote_storage().await?;
-        let remote_sig = remote_storage
-            .as_ref()
-            .map(stable_storage_sig)
-            .transpose()?;
+    // ── Network helpers ───────────────────────────────────────────────────────
 
-        let local_storage = self.read_local_storage().await?;
-        let local_sig = local_storage.as_ref().map(stable_storage_sig).transpose()?;
-
-        Ok(SyncSnapshot {
-            remote_storage,
-            remote_sig,
-            local_storage,
-            local_sig,
-        })
-    }
-
-    async fn fetch_remote_storage(&self) -> Result<Option<StorageDatabase>> {
+    /// Call `POST /sync/{client_id}/merge-from-main`.
+    ///
+    /// Returns `None` on 204 (nothing to merge), or `Some((kdbx_bytes,
+    /// commit_id, expected_branch_tip))` on success.
+    async fn request_merge_from_main(
+        &self,
+    ) -> Result<Option<(Vec<u8>, String, Option<String>)>> {
         let response = self
             .http
-            .get(self.dav_url())
+            .post(self.merge_from_main_url())
             .basic_auth(&self.client.username, Some(&self.client.password))
             .send()
             .await
-            .wrap_err("failed to fetch remote KDBX over HTTP")?;
+            .wrap_err("failed to contact merge-from-main endpoint")?;
 
         match response.status() {
+            StatusCode::NO_CONTENT => Ok(None),
             StatusCode::OK => {
+                let commit_id = response
+                    .headers()
+                    .get("X-Merge-Commit-Id")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+
+                let expected_tip_str = response
+                    .headers()
+                    .get("X-Expected-Branch-Tip")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("none")
+                    .to_string();
+                let expected_tip = if expected_tip_str == "none" {
+                    None
+                } else {
+                    Some(expected_tip_str)
+                };
+
                 let bytes = response
                     .bytes()
                     .await
-                    .wrap_err("failed to read remote KDBX response body")?;
-                let creds = self.config.database.clone();
-                let storage = spawn_blocking(move || parse_kdbx_sync(&bytes, &creds))
-                    .await
-                    .wrap_err("remote KDBX parse task panicked")??;
-                Ok(Some(storage))
+                    .wrap_err("failed to read merge-from-main response body")?
+                    .to_vec();
+
+                Ok(Some((bytes, commit_id, expected_tip)))
             }
-            StatusCode::NOT_FOUND => Ok(None),
             StatusCode::UNAUTHORIZED => bail!("server rejected sync-local credentials"),
-            status => bail!("unexpected GET status from server: {status}"),
+            status => bail!("unexpected status from merge-from-main: {status}"),
         }
     }
 
-    async fn read_local_storage(&self) -> Result<Option<StorageDatabase>> {
-        let bytes = match fs::read(&self.options.local_path).await {
-            Ok(bytes) => bytes,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(err) => {
-                return Err(err).wrap_err_with(|| {
-                    format!(
-                        "failed to read local KDBX file {}",
-                        self.options.local_path.display()
-                    )
-                })
+    /// Call `POST /sync/{client_id}/promote-merge/{commit_id}`.
+    ///
+    /// Retries on transient errors.  Returns [`BranchConflictError`] (wrapped
+    /// in [`eyre::Report`]) on 409 so the caller can exit immediately.
+    async fn do_promote(&self, commit_id: &str, expected_tip: Option<&str>) -> Result<()> {
+        let tip_param = expected_tip.unwrap_or("none");
+        let url = self.promote_merge_url(commit_id, tip_param);
+
+        loop {
+            match self.attempt_promote(&url).await {
+                Ok(()) => return Ok(()),
+                Err(e) if e.downcast_ref::<BranchConflictError>().is_some() => return Err(e),
+                Err(e) => {
+                    warn!(
+                        "sync-local '{}': promote failed (will retry): {e:#}",
+                        self.options.client_id
+                    );
+                    sleep(Duration::from_secs(2)).await;
+                }
             }
-        };
-
-        let creds = self.config.database.clone();
-        let path = self.options.local_path.clone();
-        let storage = spawn_blocking(move || parse_kdbx_sync(&bytes, &creds))
-            .await
-            .wrap_err("local KDBX parse task panicked")?
-            .wrap_err_with(|| format!("failed to parse local KDBX file {}", path.display()))?;
-
-        Ok(Some(storage))
+        }
     }
 
-    async fn write_local_file(&self, storage: &StorageDatabase) -> Result<()> {
-        if let Some(parent) = self.options.local_path.parent() {
+    async fn attempt_promote(&self, url: &str) -> Result<()> {
+        let response = self
+            .http
+            .post(url)
+            .basic_auth(&self.client.username, Some(&self.client.password))
+            .send()
+            .await
+            .wrap_err("failed to contact promote-merge endpoint")?;
+
+        match response.status() {
+            StatusCode::OK => Ok(()),
+            StatusCode::CONFLICT => Err(eyre::Report::new(BranchConflictError)),
+            StatusCode::UNAUTHORIZED => bail!("server rejected sync-local credentials"),
+            status => bail!("unexpected status from promote-merge: {status}"),
+        }
+    }
+
+    /// Write `bytes` to the local KDBX file atomically (write to a temp file,
+    /// then rename into place).
+    async fn write_local_file_atomic(&self, bytes: &[u8]) -> Result<()> {
+        let path = &self.options.local_path;
+
+        if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent)
                     .await
@@ -355,79 +384,18 @@ impl RemoteSyncer {
             }
         }
 
-        let creds = self.config.database.clone();
-        let storage = storage.clone();
-        let path = self.options.local_path.clone();
-        let bytes = spawn_blocking(move || build_kdbx_sync(&storage, &creds))
+        let tmp_path = PathBuf::from(format!("{}.tmp", path.display()));
+        fs::write(&tmp_path, bytes)
             .await
-            .wrap_err("local KDBX build task panicked")??;
-
-        fs::write(&path, bytes)
+            .wrap_err_with(|| format!("failed to write temp file {}", tmp_path.display()))?;
+        fs::rename(&tmp_path, path)
             .await
-            .wrap_err_with(|| format!("failed to write local KDBX file {}", path.display()))?;
+            .wrap_err_with(|| format!("failed to rename temp file to {}", path.display()))?;
         Ok(())
     }
-
-    async fn push_remote(&self, storage: StorageDatabase) -> Result<()> {
-        let creds = self.config.database.clone();
-        let bytes = spawn_blocking(move || build_kdbx_sync(&storage, &creds))
-            .await
-            .wrap_err("remote KDBX build task panicked")??;
-
-        let response = self
-            .http
-            .put(self.dav_url())
-            .basic_auth(&self.client.username, Some(&self.client.password))
-            .body(bytes)
-            .send()
-            .await
-            .wrap_err("failed to upload local KDBX over HTTP")?;
-
-        match response.status() {
-            status if status.is_success() => Ok(()),
-            StatusCode::UNAUTHORIZED => bail!("server rejected sync-local credentials"),
-            status => bail!("unexpected PUT status from server: {status}"),
-        }
-    }
 }
 
-async fn start_local_watcher(
-    local_path: PathBuf,
-    tx: mpsc::UnboundedSender<SyncTrigger>,
-) -> Result<RecommendedWatcher> {
-    let watch_dir = local_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    fs::create_dir_all(&watch_dir)
-        .await
-        .wrap_err_with(|| format!("failed to create watch directory {}", watch_dir.display()))?;
-
-    let mut watcher =
-        notify::recommended_watcher(move |result: notify::Result<notify::Event>| match result {
-            Ok(event) => {
-                if should_trigger_local_sync(&event) {
-                    let _ = tx.send(SyncTrigger::LocalChange);
-                }
-            }
-            Err(err) => warn!("sync-local file watcher error: {err}"),
-        })
-        .wrap_err("failed to create local file watcher")?;
-
-    watcher
-        .watch(&watch_dir, RecursiveMode::NonRecursive)
-        .wrap_err_with(|| format!("failed to watch {}", watch_dir.display()))?;
-    if fs::try_exists(&local_path)
-        .await
-        .wrap_err_with(|| format!("failed to stat {}", local_path.display()))?
-    {
-        watcher
-            .watch(&local_path, RecursiveMode::NonRecursive)
-            .wrap_err_with(|| format!("failed to watch {}", local_path.display()))?;
-    }
-
-    Ok(watcher)
-}
+// ── SSE event listener ────────────────────────────────────────────────────────
 
 async fn run_remote_event_listener(
     http: Client,
@@ -476,54 +444,6 @@ async fn run_remote_event_listener(
     }
 }
 
-async fn run_local_change_probe(local_path: PathBuf, tx: mpsc::UnboundedSender<SyncTrigger>) {
-    let mut last_seen = read_local_content_fingerprint(&local_path)
-        .await
-        .ok()
-        .flatten();
-
-    loop {
-        sleep(Duration::from_millis(250)).await;
-
-        let current = match read_local_content_fingerprint(&local_path).await {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
-                    "sync-local local probe failed to stat {}: {err}",
-                    local_path.display()
-                );
-                continue;
-            }
-        };
-
-        if current != last_seen {
-            last_seen = current;
-            let _ = tx.send(SyncTrigger::LocalChange);
-        }
-
-        if tx.is_closed() {
-            return;
-        }
-    }
-}
-
-async fn read_local_content_fingerprint(local_path: &Path) -> Result<Option<u64>> {
-    match fs::read(local_path).await {
-        Ok(bytes) => Ok(Some(bytes_signature(&bytes))),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err).wrap_err_with(|| format!("failed to read {}", local_path.display())),
-    }
-}
-
-fn should_trigger_local_sync(event: &notify::Event) -> bool {
-    !matches!(
-        event.kind,
-        EventKind::Access(_)
-            | EventKind::Other
-            | EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime))
-    )
-}
-
 fn drain_sse_frames(buffer: &mut String, tx: &mpsc::UnboundedSender<SyncTrigger>) {
     while let Some(idx) = buffer.find("\n\n") {
         let frame = buffer[..idx].to_string();
@@ -537,21 +457,12 @@ fn drain_sse_frames(buffer: &mut String, tx: &mpsc::UnboundedSender<SyncTrigger>
         }
 
         if event_name.as_deref() == Some("branch-updated") {
-            let _ = tx.send(SyncTrigger::RemoteChange);
+            let _ = tx.send(SyncTrigger::MainChanged);
         }
     }
 }
 
-fn stable_storage_sig(storage: &StorageDatabase) -> Result<u64> {
-    let repr = serialize(storage, StorageFormat::Json)?;
-    Ok(bytes_signature(repr.as_bytes()))
-}
-
-fn bytes_signature(bytes: &[u8]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
-}
+// ── Utilities ─────────────────────────────────────────────────────────────────
 
 fn infer_server_url(bind_addr: &str) -> String {
     if bind_addr.contains("://") {
@@ -570,10 +481,13 @@ fn infer_server_url(bind_addr: &str) -> String {
     format!("http://{}", bind_addr.trim_end_matches('/'))
 }
 
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use std::time::Duration;
+    use tokio::sync::mpsc;
     use tokio::time::timeout;
 
     #[test]
@@ -590,7 +504,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remote_listener_parses_branch_updates() {
+    async fn remote_listener_parses_main_branch_updates() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut buffer =
             String::from("event: ready\ndata: 0\n\nevent: branch-updated\ndata: 1\n\n");
@@ -599,28 +513,7 @@ mod tests {
 
         assert_eq!(
             timeout(Duration::from_millis(50), rx.recv()).await.unwrap(),
-            Some(SyncTrigger::RemoteChange)
-        );
-    }
-
-    #[tokio::test]
-    async fn local_watcher_ignores_read_only_file_access() {
-        let tempdir = TempDir::new().unwrap();
-        let local_path = tempdir.path().join("alice.kdbx");
-        fs::write(&local_path, b"seed").await.unwrap();
-
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let _watcher = start_local_watcher(local_path.clone(), tx).await.unwrap();
-
-        while timeout(Duration::from_millis(100), rx.recv()).await.is_ok() {}
-
-        let _ = fs::read(&local_path).await.unwrap();
-
-        assert!(
-            timeout(Duration::from_millis(500), rx.recv())
-                .await
-                .is_err(),
-            "read-only access should not trigger a local sync"
+            Some(SyncTrigger::MainChanged)
         );
     }
 }

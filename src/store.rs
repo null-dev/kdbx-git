@@ -11,6 +11,7 @@
 //! ```text
 //! refs/heads/main          ← canonical merged state
 //! refs/heads/<client-id>   ← per-client branch
+//! refs/sync-temp/<client-id> ← temporary merge commit awaiting promotion
 //! ```
 //!
 //! Each commit contains exactly one file (`db.json` / `db.yaml` / `db.toml`)
@@ -37,6 +38,41 @@ pub const MAIN_BRANCH: &str = "main";
 const BOT_NAME: &str = "kdbx-git";
 const BOT_EMAIL: &str = "kdbx-git@localhost";
 const REF_UPDATE_RETRIES: usize = 3;
+const SYNC_TEMP_REF_PREFIX: &str = "refs/sync-temp/";
+
+// ── Public types ──────────────────────────────────────────────────────────────
+
+/// Returned by [`GitStore::create_sync_merge_commit`].
+pub struct SyncMergeResult {
+    /// The merged database, ready to be serialised and written locally.
+    pub storage: StorageDatabase,
+    /// The OID of the temporary merge commit stored in `refs/sync-temp/<branch>`.
+    pub commit_id: ObjectId,
+    /// The branch tip that was current when the merge was created.
+    /// `None` means the client branch did not exist yet.
+    /// Must be passed back to [`GitStore::promote_sync_merge_commit`] so it can
+    /// detect unexpected concurrent modifications.
+    pub expected_branch_tip: Option<ObjectId>,
+}
+
+/// Returned by [`GitStore::promote_sync_merge_commit`] when the client branch
+/// was modified by a third party between `create` and `promote`.
+#[derive(Debug)]
+pub struct BranchConflictError {
+    pub branch: String,
+}
+
+impl std::fmt::Display for BranchConflictError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "branch '{}' was modified unexpectedly; aborting promote",
+            self.branch
+        )
+    }
+}
+
+impl std::error::Error for BranchConflictError {}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -159,12 +195,12 @@ impl GitStore {
         }
     }
 
-    /// Atomically update `branch` to point at `new_commit`.
+    /// Atomically update a ref given by its full name.
     ///
-    /// `prev_commit` must exactly match the current tip (for new branches, pass `None`).
-    fn set_branch_ref_sync(
+    /// `prev_commit` must exactly match the current value (for new refs, pass `None`).
+    fn set_ref_sync(
         repo: &gix::Repository,
-        branch: &str,
+        full_ref_name: &str,
         new_commit: ObjectId,
         prev_commit: Option<ObjectId>,
         message: &str,
@@ -187,14 +223,84 @@ impl GitStore {
                 expected,
                 new: Target::Object(new_commit),
             },
-            name: format!("refs/heads/{branch}")
+            name: full_ref_name
                 .try_into()
-                .wrap_err("invalid branch name")?,
+                .wrap_err("invalid ref name")?,
             deref: false,
         };
 
         repo.edit_references([edit])
-            .wrap_err("failed to update branch ref")?;
+            .wrap_err("failed to update ref")?;
+        Ok(())
+    }
+
+    /// Atomically update `branch` to point at `new_commit`.
+    ///
+    /// `prev_commit` must exactly match the current tip (for new branches, pass `None`).
+    fn set_branch_ref_sync(
+        repo: &gix::Repository,
+        branch: &str,
+        new_commit: ObjectId,
+        prev_commit: Option<ObjectId>,
+        message: &str,
+    ) -> Result<()> {
+        Self::set_ref_sync(
+            repo,
+            &format!("refs/heads/{branch}"),
+            new_commit,
+            prev_commit,
+            message,
+        )
+    }
+
+    /// Overwrite an arbitrary ref (create or replace, any previous value).
+    fn force_set_ref_sync(
+        repo: &gix::Repository,
+        full_ref_name: &str,
+        new_commit: ObjectId,
+        message: &str,
+    ) -> Result<()> {
+        use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog};
+        use gix::refs::Target;
+
+        let edit = RefEdit {
+            change: Change::Update {
+                log: LogChange {
+                    mode: RefLog::AndReference,
+                    force_create_reflog: false,
+                    message: message.into(),
+                },
+                expected: PreviousValue::Any,
+                new: Target::Object(new_commit),
+            },
+            name: full_ref_name
+                .try_into()
+                .wrap_err("invalid ref name")?,
+            deref: false,
+        };
+
+        repo.edit_references([edit])
+            .wrap_err("failed to force-set ref")?;
+        Ok(())
+    }
+
+    /// Delete a ref (no-op if it does not exist).
+    fn delete_ref_sync(repo: &gix::Repository, full_ref_name: &str) -> Result<()> {
+        use gix::refs::transaction::{Change, PreviousValue, RefEdit, RefLog};
+
+        let edit = RefEdit {
+            change: Change::Delete {
+                expected: PreviousValue::Any,
+                log: RefLog::AndReference,
+            },
+            name: full_ref_name
+                .try_into()
+                .wrap_err("invalid ref name")?,
+            deref: false,
+        };
+
+        repo.edit_references([edit])
+            .wrap_err("failed to delete ref")?;
         Ok(())
     }
 
@@ -492,16 +598,27 @@ impl GitStore {
         Ok(true)
     }
 
-    /// Execute the full client-write flow (spec step 2–3):
+    /// Merge `main` into `client_branch` (persistent).  Called on WebDAV reads
+    /// so the client always sees the latest merged state.  Failures are
+    /// non-fatal — the caller should log a warning and serve the unmerged data.
+    pub async fn merge_main_into_branch(&self, client_branch: String) -> Result<bool> {
+        self.merge_branch_into(MAIN_BRANCH.to_string(), client_branch)
+            .await
+    }
+
+    /// Execute the client-write flow:
     ///
     /// 1. Commit `storage` to `client_branch`.
     /// 2. Merge `client_branch` → `main`.
-    /// 3. If that succeeded, merge `main` → every other client branch.
+    ///
+    /// Fan-out (main → other clients) is intentionally omitted; clients pull
+    /// from main at read time via [`Self::merge_main_into_branch`].
+    ///
+    /// Returns the list of branch names that were actually updated.
     pub async fn process_client_write(
         &self,
         client_branch: String,
         storage: StorageDatabase,
-        all_client_branches: Vec<String>,
     ) -> Result<Vec<String>> {
         let mut updated_branches = vec![client_branch.clone()];
 
@@ -520,27 +637,216 @@ impl GitStore {
                 false
             });
 
-        if !merged_main {
-            return Ok(updated_branches);
-        }
-        updated_branches.push(MAIN_BRANCH.to_string());
-
-        // 3. Fan out: merge main → all other client branches
-        for other in all_client_branches
-            .iter()
-            .filter(|b| b.as_str() != client_branch.as_str())
-        {
-            match self
-                .merge_branch_into(MAIN_BRANCH.to_string(), other.clone())
-                .await
-            {
-                Ok(true) => updated_branches.push(other.clone()),
-                Ok(false) => {}
-                Err(e) => warn!("Failed to merge {MAIN_BRANCH} into '{other}': {e:#}"),
-            }
+        if merged_main {
+            updated_branches.push(MAIN_BRANCH.to_string());
         }
 
         Ok(updated_branches)
+    }
+
+    // ── Sync-local server-side merge API ─────────────────────────────────────
+
+    /// Create a temporary merge commit that merges `main` into `client_branch`.
+    ///
+    /// The commit is written to `refs/sync-temp/<client_branch>` and is NOT
+    /// yet part of the client branch history.  Call
+    /// [`Self::promote_sync_merge_commit`] after the local KDBX file has been
+    /// written to finalise the operation.
+    ///
+    /// Returns `None` when `main` does not exist or the client branch already
+    /// contains `main` (nothing to do).
+    pub async fn create_sync_merge_commit(
+        &self,
+        client_branch: String,
+    ) -> Result<Option<SyncMergeResult>> {
+        let repo = self.repo.clone();
+        let format = self.format;
+        spawn_blocking(move || {
+            Self::create_sync_merge_commit_sync(&repo.to_thread_local(), &client_branch, format)
+        })
+        .await
+        .wrap_err("blocking task panicked")?
+    }
+
+    fn create_sync_merge_commit_sync(
+        repo: &gix::Repository,
+        client_branch: &str,
+        format: StorageFormat,
+    ) -> Result<Option<SyncMergeResult>> {
+        let main_tip = match Self::branch_tip_id_sync(repo, MAIN_BRANCH)? {
+            Some(id) => id,
+            None => return Ok(None), // main doesn't exist
+        };
+
+        let client_tip = Self::branch_tip_id_sync(repo, client_branch)?;
+
+        // If client already contains main, nothing to do.
+        if let Some(cid) = client_tip {
+            if Self::is_ancestor_sync(repo, main_tip, cid)? {
+                return Ok(None);
+            }
+        }
+
+        // Compute merged storage.
+        let main_storage = Self::read_branch_sync(repo, MAIN_BRANCH, format)?
+            .ok_or_else(|| eyre::eyre!("main branch has no content"))?;
+
+        // If the client branch is an ancestor of main (or doesn't exist), use
+        // main's content directly — no keepass merge needed.
+        let is_fast_forward = match client_tip {
+            Some(cid) => Self::is_ancestor_sync(repo, cid, main_tip)?,
+            None => true,
+        };
+
+        let merged = if is_fast_forward {
+            main_storage
+        } else {
+            match Self::read_branch_sync(repo, client_branch, format)? {
+                Some(client_storage) => {
+                    merge_databases(&client_storage, &main_storage)
+                        .wrap_err("failed to merge main into client branch")?
+                }
+                None => main_storage,
+            }
+        };
+
+        // Determine the commit ID to promote.
+        //
+        // Fast-forward: point the temp ref directly at main_tip — no new commit
+        // needed.  This preserves the ancestry chain so the *next* reconcile can
+        // also fast-forward instead of falling back to a keepass merge.
+        //
+        // Real merge: create a new merge commit with two parents so that the
+        // full history of both branches is reachable from alice's branch after
+        // promotion.
+        let commit_id = if is_fast_forward {
+            main_tip
+        } else {
+            let text = serialize(&merged, format)?;
+            let blob_id = repo
+                .write_blob(text.as_bytes())
+                .wrap_err("failed to write blob")?
+                .detach();
+
+            let entry = gix::objs::tree::Entry {
+                mode: gix::objs::tree::EntryKind::Blob.into(),
+                filename: format.file_name().into(),
+                oid: blob_id,
+            };
+            let tree_id = repo
+                .write_object(&gix::objs::Tree {
+                    entries: vec![entry],
+                })
+                .wrap_err("failed to write tree")?
+                .detach();
+
+            let sig = bot_signature();
+            // Two parents: client tip (first) and main tip (second).
+            let parents: Vec<ObjectId> = client_tip.into_iter().chain([main_tip]).collect();
+            repo.write_object(&gix::objs::Commit {
+                tree: tree_id,
+                parents: parents.into(),
+                author: sig.clone(),
+                committer: sig,
+                encoding: None,
+                message: format!("sync: merge {MAIN_BRANCH} into '{client_branch}'").into(),
+                extra_headers: vec![],
+            })
+            .wrap_err("failed to write merge commit")?
+            .detach()
+        };
+
+        // Store in the sync-temp ref (overwrite any previous one).
+        let temp_ref = format!("{SYNC_TEMP_REF_PREFIX}{client_branch}");
+        Self::force_set_ref_sync(repo, &temp_ref, commit_id, "sync-temp")?;
+
+        info!(
+            "Created sync temp ref for '{client_branch}' (commit: {commit_id}, expected tip: {client_tip:?})"
+        );
+
+        Ok(Some(SyncMergeResult {
+            storage: merged,
+            commit_id,
+            expected_branch_tip: client_tip,
+        }))
+    }
+
+    /// Promote the temporary merge commit created by
+    /// [`Self::create_sync_merge_commit`] onto `client_branch`.
+    ///
+    /// `merge_commit_id` must match the OID stored in the sync-temp ref.
+    /// `expected_branch_tip` must match the current tip of `client_branch`
+    /// (i.e. it must not have been modified since the merge commit was created).
+    ///
+    /// Returns [`BranchConflictError`] (wrapped in [`eyre::Report`]) when the
+    /// branch has been modified unexpectedly so the caller can distinguish this
+    /// from transient failures and exit immediately.
+    pub async fn promote_sync_merge_commit(
+        &self,
+        client_branch: String,
+        merge_commit_id: ObjectId,
+        expected_branch_tip: Option<ObjectId>,
+    ) -> Result<()> {
+        let repo = self.repo.clone();
+        spawn_blocking(move || {
+            Self::promote_sync_merge_commit_sync(
+                &repo.to_thread_local(),
+                &client_branch,
+                merge_commit_id,
+                expected_branch_tip,
+            )
+        })
+        .await
+        .wrap_err("blocking task panicked")?
+    }
+
+    fn promote_sync_merge_commit_sync(
+        repo: &gix::Repository,
+        client_branch: &str,
+        merge_commit_id: ObjectId,
+        expected_branch_tip: Option<ObjectId>,
+    ) -> Result<()> {
+        // Verify the temp ref matches the requested commit.
+        let temp_ref = format!("{SYNC_TEMP_REF_PREFIX}{client_branch}");
+        let temp_tip = match repo
+            .try_find_reference(temp_ref.as_str())
+            .wrap_err("failed to look up sync-temp ref")?
+        {
+            Some(r) => r
+                .try_id()
+                .ok_or_else(|| eyre::eyre!("sync-temp ref is symbolic"))?
+                .detach(),
+            None => bail!("no pending sync merge commit found for '{client_branch}'"),
+        };
+
+        if temp_tip != merge_commit_id {
+            bail!(
+                "sync-temp ref for '{client_branch}' points to {temp_tip}, not {merge_commit_id}"
+            );
+        }
+
+        // Verify the branch has not been touched since the merge was created.
+        let current_tip = Self::branch_tip_id_sync(repo, client_branch)?;
+        if current_tip != expected_branch_tip {
+            return Err(eyre::Report::new(BranchConflictError {
+                branch: client_branch.to_string(),
+            }));
+        }
+
+        // Atomically advance the client branch.
+        Self::set_branch_ref_sync(
+            repo,
+            client_branch,
+            merge_commit_id,
+            current_tip,
+            "sync: promote merge commit",
+        )?;
+
+        // Clean up the temp ref.
+        Self::delete_ref_sync(repo, &temp_ref)?;
+
+        info!("Promoted sync merge commit {merge_commit_id} onto '{client_branch}'");
+        Ok(())
     }
 }
 
@@ -786,7 +1092,7 @@ mod tests {
         let (_dir, store) = make_temp_store();
 
         store
-            .process_client_write("alice".into(), simple_db("alice-db"), vec!["alice".into()])
+            .process_client_write("alice".into(), simple_db("alice-db"))
             .await
             .unwrap();
 
@@ -816,16 +1122,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_two_clients_write_and_merge() {
+    async fn test_two_clients_write_no_fanout() {
+        // With the new spec, client writes no longer fan out to other branches.
         let (_dir, store) = make_temp_store();
 
         // Alice writes first
         store
-            .process_client_write(
-                "alice".into(),
-                simple_db("alice-db"),
-                vec!["alice".into(), "bob".into()],
-            )
+            .process_client_write("alice".into(), simple_db("alice-db"))
             .await
             .unwrap();
 
@@ -834,7 +1137,6 @@ mod tests {
 
         // Bob writes independently (diverging from alice's commit)
         let mut bob_db = simple_db("bob-db");
-        // Add a second entry so the databases genuinely diverge
         bob_db.root.entries.push(StorageEntry {
             uuid: "00000000-0000-0000-0000-000000000099".into(),
             fields: {
@@ -872,13 +1174,13 @@ mod tests {
         });
 
         store
-            .process_client_write("bob".into(), bob_db, vec!["alice".into(), "bob".into()])
+            .process_client_write("bob".into(), bob_db)
             .await
             .unwrap();
 
-        // Alice's branch should have received the merged main (which includes Bob's entry)
-        let alice_db = store.read_branch("alice".into()).await.unwrap().unwrap();
-        let titles: Vec<_> = alice_db
+        // Main should have Bob's entry (merged from bob's branch).
+        let main_db = store.read_branch("main".into()).await.unwrap().unwrap();
+        let main_titles: Vec<_> = main_db
             .root
             .entries
             .iter()
@@ -886,8 +1188,140 @@ mod tests {
             .map(|v| v.value.as_str())
             .collect();
         assert!(
-            titles.contains(&"Bob's entry"),
-            "Alice should have received Bob's entry after merge; got: {titles:?}"
+            main_titles.contains(&"Bob's entry"),
+            "main should have Bob's entry after merge; got: {main_titles:?}"
+        );
+
+        // Alice's branch should NOT have Bob's entry (no fanout).
+        let alice_db = store.read_branch("alice".into()).await.unwrap().unwrap();
+        let alice_titles: Vec<_> = alice_db
+            .root
+            .entries
+            .iter()
+            .filter_map(|e| e.fields.get("Title"))
+            .map(|v| v.value.as_str())
+            .collect();
+        assert!(
+            !alice_titles.contains(&"Bob's entry"),
+            "alice's branch should NOT have Bob's entry (no fanout); got: {alice_titles:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_merge_main_into_branch_updates_client() {
+        let (_dir, store) = make_temp_store();
+
+        // Alice writes first (main == alice's commit)
+        store
+            .process_client_write("alice".into(), simple_db("alice-db"))
+            .await
+            .unwrap();
+
+        // Bob is forked from main
+        store.ensure_client_branch("bob".into()).await.unwrap();
+
+        // Alice writes again → main is updated, bob's branch is NOT updated (no fanout)
+        store
+            .process_client_write("alice".into(), simple_db("alice-db-v2"))
+            .await
+            .unwrap();
+
+        // Bob's branch should still be at the old commit
+        let bob_db = store.read_branch("bob".into()).await.unwrap().unwrap();
+        assert_eq!(bob_db.meta.database_name, Some("alice-db".into()));
+
+        // Simulate bob's WebDAV read: merge main into bob's branch
+        let updated = store
+            .merge_main_into_branch("bob".into())
+            .await
+            .unwrap();
+        assert!(updated, "bob's branch should have been updated");
+
+        let bob_db = store.read_branch("bob".into()).await.unwrap().unwrap();
+        assert_eq!(bob_db.meta.database_name, Some("alice-db-v2".into()));
+    }
+
+    #[tokio::test]
+    async fn test_create_and_promote_sync_merge_commit() {
+        let (_dir, store) = make_temp_store();
+
+        // Set up initial state: main has alice's write, bob is forked.
+        store
+            .process_client_write("alice".into(), simple_db("initial"))
+            .await
+            .unwrap();
+        store.ensure_client_branch("bob".into()).await.unwrap();
+
+        // Alice writes again → main advances but bob's branch is NOT updated.
+        store
+            .process_client_write("alice".into(), simple_db("updated"))
+            .await
+            .unwrap();
+
+        // sync-local for bob: create the merge commit.
+        let result = store
+            .create_sync_merge_commit("bob".into())
+            .await
+            .unwrap()
+            .expect("should have something to merge");
+
+        assert_eq!(result.storage.meta.database_name, Some("updated".into()));
+
+        // Promote it.
+        store
+            .promote_sync_merge_commit(
+                "bob".into(),
+                result.commit_id,
+                result.expected_branch_tip,
+            )
+            .await
+            .unwrap();
+
+        // Bob's branch should now be up to date.
+        let bob_db = store.read_branch("bob".into()).await.unwrap().unwrap();
+        assert_eq!(bob_db.meta.database_name, Some("updated".into()));
+    }
+
+    #[tokio::test]
+    async fn test_promote_detects_branch_conflict() {
+        let (_dir, store) = make_temp_store();
+
+        store
+            .process_client_write("alice".into(), simple_db("v1"))
+            .await
+            .unwrap();
+        store.ensure_client_branch("bob".into()).await.unwrap();
+        store
+            .process_client_write("alice".into(), simple_db("v2"))
+            .await
+            .unwrap();
+
+        // Create the merge commit for bob.
+        let result = store
+            .create_sync_merge_commit("bob".into())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Simulate bob's branch being modified externally before promotion.
+        store
+            .commit_to_branch("bob".into(), simple_db("external"), "external write".into())
+            .await
+            .unwrap();
+
+        // Promotion should fail with BranchConflictError.
+        let err = store
+            .promote_sync_merge_commit(
+                "bob".into(),
+                result.commit_id,
+                result.expected_branch_tip,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.downcast_ref::<BranchConflictError>().is_some(),
+            "expected BranchConflictError, got: {err:#}"
         );
     }
 }

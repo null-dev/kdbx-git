@@ -121,12 +121,14 @@ impl GitStore {
 
     // ── Sync core (executed inside spawn_blocking) ────────────────────────────
 
-    /// Read the storage database from the tip of `branch`.
-    fn read_branch_sync(
+    /// Read the raw serialised text of the database file at the tip of `branch`.
+    ///
+    /// Returns `None` if the branch does not exist.
+    fn read_branch_text_sync(
         repo: &gix::Repository,
         branch: &str,
         format: StorageFormat,
-    ) -> Result<Option<StorageDatabase>> {
+    ) -> Result<Option<String>> {
         let ref_name = format!("refs/heads/{branch}");
         let reference = match repo
             .try_find_reference(ref_name.as_str())
@@ -168,8 +170,9 @@ impl GitStore {
                     .try_into_blob()
                     .wrap_err("tree entry is not a blob")?;
                 let text = std::str::from_utf8(blob.data.as_ref())
-                    .wrap_err("database blob is not valid UTF-8")?;
-                return deserialize(text, format).map(Some);
+                    .wrap_err("database blob is not valid UTF-8")?
+                    .to_owned();
+                return Ok(Some(text));
             }
         }
 
@@ -177,6 +180,18 @@ impl GitStore {
             "file '{}' not found in tree for branch '{branch}'",
             file_name
         );
+    }
+
+    /// Read the storage database from the tip of `branch`.
+    fn read_branch_sync(
+        repo: &gix::Repository,
+        branch: &str,
+        format: StorageFormat,
+    ) -> Result<Option<StorageDatabase>> {
+        match Self::read_branch_text_sync(repo, branch, format)? {
+            Some(text) => deserialize(&text, format).map(Some),
+            None => Ok(None),
+        }
     }
 
     /// Return the OID at the tip of `branch`, or `None` if it doesn't exist.
@@ -620,6 +635,30 @@ impl GitStore {
         client_branch: String,
         storage: StorageDatabase,
     ) -> Result<Vec<String>> {
+        // Check whether the incoming content differs from the current tip. If
+        // not, skip the commit entirely to avoid polluting the git history.
+        let unchanged = {
+            let repo = self.repo.clone();
+            let format = self.format;
+            let branch = client_branch.clone();
+            let new_storage = storage.clone();
+            spawn_blocking(move || -> Result<bool> {
+                let repo = repo.to_thread_local();
+                let new_text = serialize(&new_storage, format)?;
+                match Self::read_branch_text_sync(&repo, &branch, format)? {
+                    Some(existing_text) => Ok(new_text == existing_text),
+                    None => Ok(false),
+                }
+            })
+            .await
+            .wrap_err("blocking task panicked")??
+        };
+
+        if unchanged {
+            info!("Client '{}': content unchanged, skipping commit", client_branch);
+            return Ok(vec![]);
+        }
+
         let mut updated_branches = vec![client_branch.clone()];
 
         // 1. Commit new state to client's own branch
@@ -1033,6 +1072,55 @@ mod tests {
 
         let read = store.read_branch("main".into()).await.unwrap().unwrap();
         assert_eq!(read.meta.database_name, Some("v2".into()));
+    }
+
+    #[tokio::test]
+    async fn test_process_client_write_skips_commit_when_unchanged() {
+        let (_dir, store) = make_temp_store();
+
+        // Initial write — should create a commit.
+        let updated = store
+            .process_client_write("alice".into(), simple_db("Alice DB"))
+            .await
+            .unwrap();
+        assert!(!updated.is_empty(), "first write should update branches");
+        let tip_after_first = store
+            .branch_tip_id("alice".into())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Second write with identical content — should be a no-op.
+        let updated2 = store
+            .process_client_write("alice".into(), simple_db("Alice DB"))
+            .await
+            .unwrap();
+        assert!(updated2.is_empty(), "unchanged write should update no branches");
+        let tip_after_second = store
+            .branch_tip_id("alice".into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            tip_after_first, tip_after_second,
+            "branch tip should not advance on unchanged write"
+        );
+
+        // Third write with different content — should commit.
+        let updated3 = store
+            .process_client_write("alice".into(), simple_db("Alice DB v2"))
+            .await
+            .unwrap();
+        assert!(!updated3.is_empty(), "changed write should update branches");
+        let tip_after_third = store
+            .branch_tip_id("alice".into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(
+            tip_after_second, tip_after_third,
+            "branch tip should advance on changed write"
+        );
     }
 
     #[tokio::test]

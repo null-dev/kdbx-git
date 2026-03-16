@@ -8,6 +8,7 @@ use std::{
 
 use color_eyre::eyre::{bail, Context, Result};
 use futures_util::StreamExt;
+use notify::event::{EventKind, MetadataKind, ModifyKind};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use reqwest::{header, Client, StatusCode};
 use tokio::{
@@ -404,8 +405,10 @@ async fn start_local_watcher(
 
     let mut watcher =
         notify::recommended_watcher(move |result: notify::Result<notify::Event>| match result {
-            Ok(_event) => {
-                let _ = tx.send(SyncTrigger::LocalChange);
+            Ok(event) => {
+                if should_trigger_local_sync(&event) {
+                    let _ = tx.send(SyncTrigger::LocalChange);
+                }
             }
             Err(err) => warn!("sync-local file watcher error: {err}"),
         })
@@ -512,6 +515,15 @@ async fn read_local_content_fingerprint(local_path: &Path) -> Result<Option<u64>
     }
 }
 
+fn should_trigger_local_sync(event: &notify::Event) -> bool {
+    !matches!(
+        event.kind,
+        EventKind::Access(_)
+            | EventKind::Other
+            | EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime))
+    )
+}
+
 fn drain_sse_frames(buffer: &mut String, tx: &mpsc::UnboundedSender<SyncTrigger>) {
     while let Some(idx) = buffer.find("\n\n") {
         let frame = buffer[..idx].to_string();
@@ -592,7 +604,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_watcher_emits_change_when_file_is_only_read() {
+    async fn local_watcher_ignores_read_only_file_access() {
         let tempdir = TempDir::new().unwrap();
         let local_path = tempdir.path().join("alice.kdbx");
         fs::write(&local_path, b"seed").await.unwrap();
@@ -600,16 +612,15 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let _watcher = start_local_watcher(local_path.clone(), tx).await.unwrap();
 
-        while timeout(Duration::from_millis(100), rx.recv())
-            .await
-            .is_ok()
-        {}
+        while timeout(Duration::from_millis(100), rx.recv()).await.is_ok() {}
 
         let _ = fs::read(&local_path).await.unwrap();
 
-        assert_eq!(
-            timeout(Duration::from_secs(2), rx.recv()).await.unwrap(),
-            Some(SyncTrigger::LocalChange)
+        assert!(
+            timeout(Duration::from_millis(500), rx.recv())
+                .await
+                .is_err(),
+            "read-only access should not trigger a local sync"
         );
     }
 }

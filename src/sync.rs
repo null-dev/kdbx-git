@@ -561,6 +561,7 @@ fn infer_server_url(bind_addr: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
     use tokio::time::timeout;
 
     #[test]
@@ -587,6 +588,28 @@ mod tests {
         assert_eq!(
             timeout(Duration::from_millis(50), rx.recv()).await.unwrap(),
             Some(SyncTrigger::RemoteChange)
+        );
+    }
+
+    #[tokio::test]
+    async fn local_watcher_emits_change_when_file_is_only_read() {
+        let tempdir = TempDir::new().unwrap();
+        let local_path = tempdir.path().join("alice.kdbx");
+        fs::write(&local_path, b"seed").await.unwrap();
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _watcher = start_local_watcher(local_path.clone(), tx).await.unwrap();
+
+        while timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .is_ok()
+        {}
+
+        let _ = fs::read(&local_path).await.unwrap();
+
+        assert_eq!(
+            timeout(Duration::from_secs(2), rx.recv()).await.unwrap(),
+            Some(SyncTrigger::LocalChange)
         );
     }
 }

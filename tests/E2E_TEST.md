@@ -8,15 +8,15 @@ Tests marked ✅ are already implemented. All others need to be written.
 
 - ✅ `init_imports_main_and_git_history_is_readable` — GET after `--init` returns the imported entries; git log shows `db.json`
 - ✅ `client_writes_merge_and_fan_out_across_clients` — after alice writes, bob GET triggers merge-on-read and returns alice's entries; after bob writes, alice GET returns both entries
-- [ ] GET when the client branch does not yet exist returns 404
-- [ ] GET when only the client branch exists (no main) returns the client's own content
-- [ ] GET after the client's own PUT returns that same content (round-trip identity)
-- [ ] GET always includes content from main even when the client never wrote anything (merge-on-read via fast-forward)
-- [ ] GET triggers merge-on-read: client branch behind main before GET, client branch contains main content after GET
-- [ ] GET when merge-on-read fails (simulate corrupt main) still returns the client's stale data rather than an error
-- [ ] GET on directory path (`/dav/{client_id}/`) returns a 207 Multi-Status listing containing `database.kdbx`
-- [ ] PROPFIND on `database.kdbx` returns 207 with Content-Length and Last-Modified properties
-- [ ] PROPFIND on the root collection lists exactly one entry (`database.kdbx`)
+- ✅ GET when the client branch does not yet exist returns 404
+- ✅ GET when only the client branch exists (no main) returns the client's own content
+- ✅ GET after the client's own PUT returns that same content (round-trip identity)
+- ✅ GET always includes content from main even when the client never wrote anything (merge-on-read via fast-forward)
+- ✅ GET triggers merge-on-read: client branch behind main before GET, client branch contains main content after GET
+- ✅ GET when merge-on-read fails (simulate corrupt main) still returns the client's stale data rather than an error
+- ✅ GET on directory path (`/dav/{client_id}/`) returns a 207 Multi-Status listing containing `database.kdbx`
+- ✅ PROPFIND on `database.kdbx` returns 207 with Content-Length and Last-Modified properties
+- ✅ PROPFIND on the root collection lists exactly one entry (`database.kdbx`)
 
 ## WebDAV — Write path
 

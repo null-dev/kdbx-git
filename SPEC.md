@@ -28,7 +28,9 @@ I want to build a server that manages multiple clients accessing a single KDBX 4
 
 `sync-local` is a client-side daemon that keeps a local KDBX file in sync with the server. It is pull-only: it never pushes local file changes to the server. All merging is performed server-side.
 
-The sync-local client:
+The sync-local client handles two directions of change:
+
+**Pulling remote changes (server → local file):**
 1. On startup, checks for any interrupted promote operation from a previous run (see step 5) and retries it.
 2. Performs an initial reconcile by calling the server's merge-from-main endpoint.
 3. Listens for SSE (Server-Sent Events) notifications that fire when the "main" branch advances.
@@ -37,6 +39,10 @@ The sync-local client:
 6. Saves a "pending promote" record to a state file (`{local_path}.sync-state.json`) before calling step 7, so that an interruption can be recovered on next startup.
 7. Calls `POST /sync/{client_id}/promote-merge/{commit_id}?expected-tip={tip}` to promote the temporary merge commit onto the client's branch on the server.
 8. On a branch conflict error (409), the client exits with a fatal error (another process modified the branch unexpectedly). On other errors, the client logs a warning and continues.
+
+**Pushing local changes (local file → server):**
+- A file watcher monitors the local KDBX file for changes.
+- When a change is detected, the client waits 400ms (debounce), then reads the file and compares its content hash to the hash of the last bytes written by the pull path. If they match, the event is a self-write from a pull and is suppressed. Otherwise, the raw KDBX bytes are uploaded via `PUT /dav/{client_id}/database.kdbx` (the existing WebDAV endpoint). The server then merges the change into main, which triggers an SSE event, causing the client to pull the server's merged result back.
 
 The sync-local client never directly accesses the server's git database (which is unencrypted) — all git operations happen server-side.
 

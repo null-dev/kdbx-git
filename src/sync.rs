@@ -1,4 +1,6 @@
 use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
     time::Duration,
@@ -6,6 +8,8 @@ use std::{
 
 use color_eyre::eyre::{bail, Context, Result};
 use futures_util::StreamExt;
+use notify::event::{EventKind, MetadataKind, ModifyKind};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use reqwest::{header, Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -31,6 +35,7 @@ pub struct SyncLocalOptions {
 enum SyncTrigger {
     Startup,
     MainChanged,
+    LocalFileChanged,
 }
 
 // ── Interrupt-recovery state file ────────────────────────────────────────────
@@ -124,6 +129,10 @@ async fn run_sync_local(
     }
 
     let (tx, mut rx) = mpsc::unbounded_channel::<SyncTrigger>();
+
+    let watcher = start_local_watcher(syncer.options.local_path.clone(), tx.clone()).await?;
+    let _watcher = watcher; // keep alive
+
     let remote_task = tokio::spawn(run_remote_event_listener(
         syncer.http.clone(),
         syncer.events_url(),
@@ -137,16 +146,25 @@ async fn run_sync_local(
     }
 
     while let Some(trigger) = rx.recv().await {
-        match syncer.reconcile(trigger).await {
-            Ok(()) => {}
-            Err(e) if e.downcast_ref::<BranchConflictError>().is_some() => {
-                // Fatal: branch was modified unexpectedly.
-                remote_task.abort();
-                return Err(e);
+        match trigger {
+            SyncTrigger::LocalFileChanged => {
+                // Let the writer finish flushing before we read the file.
+                sleep(Duration::from_millis(400)).await;
+                if let Err(e) = syncer.push_local_to_webdav().await {
+                    warn!("sync-local '{}': push failed: {e:#}", syncer.options.client_id);
+                }
             }
-            Err(e) => {
-                warn!("sync-local '{}': {e:#}", syncer.options.client_id);
-            }
+            other => match syncer.reconcile(other).await {
+                Ok(()) => {}
+                Err(e) if e.downcast_ref::<BranchConflictError>().is_some() => {
+                    // Fatal: branch was modified unexpectedly.
+                    remote_task.abort();
+                    return Err(e);
+                }
+                Err(e) => {
+                    warn!("sync-local '{}': {e:#}", syncer.options.client_id);
+                }
+            },
         }
     }
 
@@ -163,6 +181,9 @@ struct RemoteSyncer {
     options: SyncLocalOptions,
     /// Path to the JSON state file used for interrupt recovery.
     state_path: PathBuf,
+    /// Hash of the last bytes we wrote to the local file, used to suppress
+    /// watcher events caused by our own writes.
+    last_written_hash: Option<u64>,
 }
 
 impl RemoteSyncer {
@@ -174,7 +195,15 @@ impl RemoteSyncer {
             base_url: base_url.trim_end_matches('/').to_string(),
             state_path,
             options,
+            last_written_hash: None,
         }
+    }
+
+    fn dav_url(&self) -> String {
+        format!(
+            "{}/dav/{}/database.kdbx",
+            self.base_url, self.options.client_id
+        )
     }
 
     fn events_url(&self) -> String {
@@ -219,7 +248,7 @@ impl RemoteSyncer {
 
     // ── Core reconciliation ───────────────────────────────────────────────────
 
-    /// Handle a sync trigger.
+    /// Handle a pull trigger (Startup or MainChanged).
     ///
     /// 1. If a promote is pending (interrupted run), retry it.
     /// 2. Request a new merge commit from the server.
@@ -277,6 +306,51 @@ impl RemoteSyncer {
             self.options.client_id
         );
         Ok(())
+    }
+
+    // ── Local push ────────────────────────────────────────────────────────────
+
+    /// Read the local KDBX file and upload it via WebDAV PUT, unless the
+    /// content matches what we last wrote ourselves (self-write suppression).
+    async fn push_local_to_webdav(&mut self) -> Result<()> {
+        let bytes = match fs::read(&self.options.local_path).await {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                return Err(e).wrap_err_with(|| {
+                    format!(
+                        "failed to read local KDBX file {}",
+                        self.options.local_path.display()
+                    )
+                })
+            }
+        };
+
+        // Suppress events caused by our own atomic writes.
+        let hash = bytes_signature(&bytes);
+        if Some(hash) == self.last_written_hash {
+            return Ok(());
+        }
+
+        info!(
+            "sync-local '{}': pushing local change to server",
+            self.options.client_id
+        );
+
+        let response = self
+            .http
+            .put(self.dav_url())
+            .basic_auth(&self.client.username, Some(&self.client.password))
+            .body(bytes)
+            .send()
+            .await
+            .wrap_err("failed to push local KDBX to server")?;
+
+        match response.status() {
+            s if s.is_success() => Ok(()),
+            StatusCode::UNAUTHORIZED => bail!("server rejected sync-local credentials"),
+            s => bail!("unexpected PUT status from server: {s}"),
+        }
     }
 
     // ── Network helpers ───────────────────────────────────────────────────────
@@ -372,8 +446,9 @@ impl RemoteSyncer {
     }
 
     /// Write `bytes` to the local KDBX file atomically (write to a temp file,
-    /// then rename into place).
-    async fn write_local_file_atomic(&self, bytes: &[u8]) -> Result<()> {
+    /// then rename into place), and record the hash to suppress the resulting
+    /// watcher event.
+    async fn write_local_file_atomic(&mut self, bytes: &[u8]) -> Result<()> {
         let path = &self.options.local_path;
 
         if let Some(parent) = path.parent() {
@@ -391,8 +466,59 @@ impl RemoteSyncer {
         fs::rename(&tmp_path, path)
             .await
             .wrap_err_with(|| format!("failed to rename temp file to {}", path.display()))?;
+
+        self.last_written_hash = Some(bytes_signature(bytes));
         Ok(())
     }
+}
+
+// ── Local file watcher ────────────────────────────────────────────────────────
+
+async fn start_local_watcher(
+    local_path: PathBuf,
+    tx: mpsc::UnboundedSender<SyncTrigger>,
+) -> Result<RecommendedWatcher> {
+    let watch_dir = local_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    fs::create_dir_all(&watch_dir)
+        .await
+        .wrap_err_with(|| format!("failed to create watch directory {}", watch_dir.display()))?;
+
+    let mut watcher =
+        notify::recommended_watcher(move |result: notify::Result<notify::Event>| match result {
+            Ok(event) => {
+                if should_trigger_local_sync(&event) {
+                    let _ = tx.send(SyncTrigger::LocalFileChanged);
+                }
+            }
+            Err(err) => warn!("sync-local file watcher error: {err}"),
+        })
+        .wrap_err("failed to create local file watcher")?;
+
+    watcher
+        .watch(&watch_dir, RecursiveMode::NonRecursive)
+        .wrap_err_with(|| format!("failed to watch {}", watch_dir.display()))?;
+    if fs::try_exists(&local_path)
+        .await
+        .wrap_err_with(|| format!("failed to stat {}", local_path.display()))?
+    {
+        watcher
+            .watch(&local_path, RecursiveMode::NonRecursive)
+            .wrap_err_with(|| format!("failed to watch {}", local_path.display()))?;
+    }
+
+    Ok(watcher)
+}
+
+fn should_trigger_local_sync(event: &notify::Event) -> bool {
+    !matches!(
+        event.kind,
+        EventKind::Access(_)
+            | EventKind::Other
+            | EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime))
+    )
 }
 
 // ── SSE event listener ────────────────────────────────────────────────────────
@@ -464,6 +590,12 @@ fn drain_sse_frames(buffer: &mut String, tx: &mpsc::UnboundedSender<SyncTrigger>
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
+fn bytes_signature(bytes: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
 fn infer_server_url(bind_addr: &str) -> String {
     if bind_addr.contains("://") {
         return bind_addr.trim_end_matches('/').to_string();
@@ -487,6 +619,7 @@ fn infer_server_url(bind_addr: &str) -> String {
 mod tests {
     use super::*;
     use std::time::Duration;
+    use tempfile::TempDir;
     use tokio::sync::mpsc;
     use tokio::time::timeout;
 
@@ -514,6 +647,28 @@ mod tests {
         assert_eq!(
             timeout(Duration::from_millis(50), rx.recv()).await.unwrap(),
             Some(SyncTrigger::MainChanged)
+        );
+    }
+
+    #[tokio::test]
+    async fn local_watcher_ignores_read_only_file_access() {
+        let tempdir = TempDir::new().unwrap();
+        let local_path = tempdir.path().join("alice.kdbx");
+        fs::write(&local_path, b"seed").await.unwrap();
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _watcher = start_local_watcher(local_path.clone(), tx).await.unwrap();
+
+        // Drain any startup events.
+        while timeout(Duration::from_millis(100), rx.recv()).await.is_ok() {}
+
+        let _ = fs::read(&local_path).await.unwrap();
+
+        assert!(
+            timeout(Duration::from_millis(500), rx.recv())
+                .await
+                .is_err(),
+            "read-only access should not trigger a local sync"
         );
     }
 }

@@ -530,6 +530,7 @@ async fn dav_handler(State(state): State<AppState>, req: Request) -> impl IntoRe
     let dav = DavHandler::builder()
         .filesystem(fs)
         .locksystem(FakeLs::new())
+        .autoindex(true)
         .strip_prefix(prefix)
         .build_handler();
 
@@ -630,7 +631,10 @@ async fn sync_merge_from_main_handler(
                     .body(axum::body::Body::from(bytes))
                     .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
                 Ok(Err(e)) => {
-                    warn!("sync merge-from-main: failed to build KDBX for '{}': {e:#}", client_id);
+                    warn!(
+                        "sync merge-from-main: failed to build KDBX for '{}': {e:#}",
+                        client_id
+                    );
                     StatusCode::INTERNAL_SERVER_ERROR.into_response()
                 }
                 Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -669,7 +673,10 @@ struct PromoteMergeQuery {
 /// Returns **409 Conflict** if the branch was modified unexpectedly.
 async fn sync_promote_merge_handler(
     State(state): State<AppState>,
-    Path(PromoteMergePathParams { commit_id: commit_id_str, .. }): Path<PromoteMergePathParams>,
+    Path(PromoteMergePathParams {
+        commit_id: commit_id_str,
+        ..
+    }): Path<PromoteMergePathParams>,
     Query(query): Query<PromoteMergeQuery>,
     req: Request,
 ) -> impl IntoResponse {
@@ -713,10 +720,7 @@ async fn sync_promote_merge_handler(
             StatusCode::CONFLICT.into_response()
         }
         Err(e) => {
-            warn!(
-                "sync promote-merge: failed for '{}': {e:#}",
-                client_id
-            );
+            warn!("sync promote-merge: failed for '{}': {e:#}", client_id);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }

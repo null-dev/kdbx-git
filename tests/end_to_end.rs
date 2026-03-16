@@ -567,7 +567,7 @@ async fn get_when_merge_on_read_fails_still_returns_clients_stale_data() {
 }
 
 #[tokio::test]
-async fn get_on_directory_path_returns_multistatus_listing_containing_database_kdbx() {
+async fn get_on_directory_path_returns_autoindex_listing_containing_database_kdbx() {
     let tempdir = TempDir::new().unwrap();
     let config = test_config(tempdir.path(), None);
     let server = TestServer::start(config, tempdir).await.unwrap();
@@ -583,10 +583,18 @@ async fn get_on_directory_path_returns_multistatus_listing_containing_database_k
     .send()
     .await
     .unwrap();
-    assert_eq!(response.status().as_u16(), 207);
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/html; charset=utf-8")
+    );
 
     let body = response.text().await.unwrap();
     assert!(body.contains("database.kdbx"), "body was: {body}");
+    assert!(body.contains("<html"), "body was: {body}");
 }
 
 #[tokio::test]

@@ -14,7 +14,7 @@ Tests marked ✅ are already implemented. All others need to be written.
 - ✅ GET always includes content from main even when the client never wrote anything (merge-on-read via fast-forward)
 - ✅ GET triggers merge-on-read: client branch behind main before GET, client branch contains main content after GET
 - ✅ GET when merge-on-read fails (simulate corrupt main) still returns the client's stale data rather than an error
-- ✅ GET on directory path (`/dav/{client_id}/`) returns a 207 Multi-Status listing containing `database.kdbx`
+- ✅ GET on directory path (`/dav/{client_id}/`) returns the crate-native autoindex listing containing `database.kdbx`
 - ✅ PROPFIND on `database.kdbx` returns 207 with Content-Length and Last-Modified properties
 - ✅ PROPFIND on the root collection lists exactly one entry (`database.kdbx`)
 

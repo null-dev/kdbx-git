@@ -66,7 +66,7 @@ pub fn deserialize(s: &str, format: StorageFormat) -> Result<StorageDatabase> {
 mod tests {
     use super::*;
     use crate::storage::types::*;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn minimal_db() -> StorageDatabase {
         StorageDatabase {
@@ -100,7 +100,7 @@ mod tests {
                 history_max_items: Some(10),
                 history_max_size: Some(6_291_456),
                 settings_changed: None,
-                custom_data: HashMap::new(),
+                custom_data: BTreeMap::new(),
             },
             root: StorageGroup {
                 uuid: "00000000-0000-0000-0000-000000000001".into(),
@@ -112,7 +112,7 @@ mod tests {
                 entries: vec![StorageEntry {
                     uuid: "00000000-0000-0000-0000-000000000002".into(),
                     fields: {
-                        let mut m = HashMap::new();
+                        let mut m = BTreeMap::new();
                         m.insert(
                             "Title".into(),
                             StorageValue {
@@ -140,7 +140,7 @@ mod tests {
                         expires: Some(false),
                         usage_count: Some(0),
                     },
-                    custom_data: HashMap::new(),
+                    custom_data: BTreeMap::new(),
                     icon_id: None,
                     custom_icon: None,
                     foreground_color: None,
@@ -148,7 +148,7 @@ mod tests {
                     override_url: None,
                     quality_check: None,
                     previous_parent_group: None,
-                    attachments: HashMap::new(),
+                    attachments: BTreeMap::new(),
                     history: vec![],
                 }],
                 times: StorageTimes {
@@ -160,7 +160,7 @@ mod tests {
                     expires: None,
                     usage_count: None,
                 },
-                custom_data: HashMap::new(),
+                custom_data: BTreeMap::new(),
                 is_expanded: true,
                 default_autotype_sequence: None,
                 enable_autotype: None,
@@ -169,7 +169,153 @@ mod tests {
                 tags: vec![],
                 previous_parent_group: None,
             },
-            deleted_objects: HashMap::new(),
+            deleted_objects: BTreeMap::new(),
+        }
+    }
+
+    fn map_order_db() -> StorageDatabase {
+        let mut meta_custom_data = BTreeMap::new();
+        for key in ["z-last", "m-middle", "a-first", "k-other"] {
+            meta_custom_data.insert(
+                key.into(),
+                StorageCustomDataItem {
+                    value: Some(StorageCustomDataValue::String(format!("value-{key}"))),
+                    last_modification_time: Some("2024-01-01T00:00:00".into()),
+                },
+            );
+        }
+
+        let mut group_custom_data = BTreeMap::new();
+        for key in ["tag-z", "tag-c", "tag-a", "tag-m"] {
+            group_custom_data.insert(
+                key.into(),
+                StorageCustomDataItem {
+                    value: Some(StorageCustomDataValue::String(format!("group-{key}"))),
+                    last_modification_time: None,
+                },
+            );
+        }
+
+        let mut entry_fields = BTreeMap::new();
+        for key in ["UserName", "Password", "URL", "Notes", "Title"] {
+            entry_fields.insert(
+                key.into(),
+                StorageValue {
+                    value: format!("value-{key}"),
+                    protected: key == "Password",
+                },
+            );
+        }
+
+        let mut entry_custom_data = BTreeMap::new();
+        for key in ["delta", "beta", "alpha", "gamma"] {
+            entry_custom_data.insert(
+                key.into(),
+                StorageCustomDataItem {
+                    value: Some(StorageCustomDataValue::String(format!("entry-{key}"))),
+                    last_modification_time: None,
+                },
+            );
+        }
+
+        let mut attachments = BTreeMap::new();
+        for key in ["backup.bin", "a.txt", "notes.md", "z.log"] {
+            attachments.insert(
+                key.into(),
+                StorageAttachment {
+                    data: format!("encoded-{key}"),
+                    protected: false,
+                },
+            );
+        }
+
+        let mut deleted_objects = BTreeMap::new();
+        for key in [
+            "00000000-0000-0000-0000-000000000003",
+            "00000000-0000-0000-0000-000000000001",
+            "00000000-0000-0000-0000-000000000002",
+        ] {
+            deleted_objects.insert(key.into(), Some("2024-01-01T00:00:00".into()));
+        }
+
+        StorageDatabase {
+            meta: StorageMeta {
+                generator: Some("kdbx-git".into()),
+                database_name: Some("Order Test".into()),
+                database_name_changed: None,
+                database_description: None,
+                database_description_changed: None,
+                default_username: None,
+                default_username_changed: None,
+                maintenance_history_days: None,
+                color: None,
+                master_key_changed: None,
+                master_key_change_rec: None,
+                master_key_change_force: None,
+                memory_protection: None,
+                recyclebin_enabled: Some(true),
+                recyclebin_uuid: None,
+                recyclebin_changed: None,
+                entry_templates_group: None,
+                entry_templates_group_changed: None,
+                last_selected_group: None,
+                last_top_visible_group: None,
+                history_max_items: None,
+                history_max_size: None,
+                settings_changed: None,
+                custom_data: meta_custom_data,
+            },
+            root: StorageGroup {
+                uuid: "00000000-0000-0000-0000-000000000001".into(),
+                name: "Root".into(),
+                notes: None,
+                icon_id: None,
+                custom_icon: None,
+                groups: vec![],
+                entries: vec![StorageEntry {
+                    uuid: "00000000-0000-0000-0000-000000000002".into(),
+                    fields: entry_fields,
+                    autotype: None,
+                    tags: vec![],
+                    times: StorageTimes {
+                        creation: Some("2024-01-01T00:00:00".into()),
+                        last_modification: Some("2024-01-01T00:00:00".into()),
+                        last_access: None,
+                        expiry: None,
+                        location_changed: None,
+                        expires: Some(false),
+                        usage_count: Some(0),
+                    },
+                    custom_data: entry_custom_data,
+                    icon_id: None,
+                    custom_icon: None,
+                    foreground_color: None,
+                    background_color: None,
+                    override_url: None,
+                    quality_check: None,
+                    previous_parent_group: None,
+                    attachments,
+                    history: vec![],
+                }],
+                times: StorageTimes {
+                    creation: None,
+                    last_modification: None,
+                    last_access: None,
+                    expiry: None,
+                    location_changed: None,
+                    expires: None,
+                    usage_count: None,
+                },
+                custom_data: group_custom_data,
+                is_expanded: true,
+                default_autotype_sequence: None,
+                enable_autotype: None,
+                enable_searching: None,
+                last_top_visible_entry: None,
+                tags: vec![],
+                previous_parent_group: None,
+            },
+            deleted_objects,
         }
     }
 
@@ -188,5 +334,20 @@ mod tests {
     fn json_remains_the_default_storage_format() {
         assert_eq!(StorageFormat::default(), StorageFormat::Json);
         assert_eq!(StorageFormat::default().file_name(), "db.json");
+    }
+
+    #[test]
+    fn serialization_is_deterministic_for_all_formats() {
+        for format in StorageFormat::ALL {
+            let variants = (0..24)
+                .map(|_| serialize(&map_order_db(), format).unwrap())
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                variants.len(),
+                1,
+                "expected deterministic {format:?} serialization, got {} variants",
+                variants.len()
+            );
+        }
     }
 }

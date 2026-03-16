@@ -5,7 +5,7 @@
 //! represented here; binary data is base64-encoded so the text is diff-able.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Root document stored per git commit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,7 +13,7 @@ pub struct StorageDatabase {
     pub meta: StorageMeta,
     pub root: StorageGroup,
     /// UUID (string) → deletion timestamp (ISO 8601) or `null`.
-    pub deleted_objects: HashMap<String, Option<String>>,
+    pub deleted_objects: BTreeMap<String, Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,7 +41,7 @@ pub struct StorageMeta {
     pub history_max_items: Option<usize>,
     pub history_max_size: Option<usize>,
     pub settings_changed: Option<String>,
-    pub custom_data: HashMap<String, StorageCustomDataItem>,
+    pub custom_data: BTreeMap<String, StorageCustomDataItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,7 +63,7 @@ pub struct StorageGroup {
     pub groups: Vec<StorageGroup>,
     pub entries: Vec<StorageEntry>,
     pub times: StorageTimes,
-    pub custom_data: HashMap<String, StorageCustomDataItem>,
+    pub custom_data: BTreeMap<String, StorageCustomDataItem>,
     pub is_expanded: bool,
     pub default_autotype_sequence: Option<String>,
     pub enable_autotype: Option<bool>,
@@ -76,11 +76,11 @@ pub struct StorageGroup {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageEntry {
     pub uuid: String,
-    pub fields: HashMap<String, StorageValue>,
+    pub fields: BTreeMap<String, StorageValue>,
     pub autotype: Option<StorageAutoType>,
     pub tags: Vec<String>,
     pub times: StorageTimes,
-    pub custom_data: HashMap<String, StorageCustomDataItem>,
+    pub custom_data: BTreeMap<String, StorageCustomDataItem>,
     pub icon_id: Option<usize>,
     pub custom_icon: Option<StorageCustomIcon>,
     pub foreground_color: Option<StorageColor>,
@@ -89,7 +89,7 @@ pub struct StorageEntry {
     pub quality_check: Option<bool>,
     pub previous_parent_group: Option<String>,
     /// Attachment name → base64-encoded binary blob.
-    pub attachments: HashMap<String, StorageAttachment>,
+    pub attachments: BTreeMap<String, StorageAttachment>,
     /// Previous versions of this entry (no further nesting).
     pub history: Vec<StorageEntry>,
 }

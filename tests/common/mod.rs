@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
@@ -108,7 +108,7 @@ pub fn sample_db(name: &str, title: &str) -> StorageDatabase {
             history_max_items: None,
             history_max_size: None,
             settings_changed: None,
-            custom_data: HashMap::new(),
+            custom_data: BTreeMap::new(),
         },
         root: StorageGroup {
             uuid: "00000000-0000-0000-0000-000000000001".into(),
@@ -127,7 +127,7 @@ pub fn sample_db(name: &str, title: &str) -> StorageDatabase {
                 expires: None,
                 usage_count: None,
             },
-            custom_data: HashMap::new(),
+            custom_data: BTreeMap::new(),
             is_expanded: true,
             default_autotype_sequence: None,
             enable_autotype: None,
@@ -136,7 +136,7 @@ pub fn sample_db(name: &str, title: &str) -> StorageDatabase {
             tags: vec![],
             previous_parent_group: None,
         },
-        deleted_objects: HashMap::new(),
+        deleted_objects: BTreeMap::new(),
     };
 
     add_entry(
@@ -157,7 +157,7 @@ pub fn add_entry(
     username: &str,
     password: &str,
 ) {
-    let mut fields = HashMap::new();
+    let mut fields = BTreeMap::new();
     fields.insert(
         "Title".into(),
         StorageValue {
@@ -194,7 +194,7 @@ pub fn add_entry(
             expires: Some(false),
             usage_count: Some(0),
         },
-        custom_data: HashMap::new(),
+        custom_data: BTreeMap::new(),
         icon_id: None,
         custom_icon: None,
         foreground_color: None,
@@ -202,7 +202,7 @@ pub fn add_entry(
         override_url: None,
         quality_check: None,
         previous_parent_group: None,
-        attachments: HashMap::new(),
+        attachments: BTreeMap::new(),
         history: vec![],
     });
 }

@@ -11,7 +11,7 @@ use keepass::{
     },
     Database,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 // ── Timestamp helpers ────────────────────────────────────────────────────────
@@ -466,14 +466,14 @@ fn storage_to_custom_icon(s: &StorageCustomIcon) -> Result<CustomIcon> {
 
 fn custom_data_map_to_storage(
     m: &HashMap<String, CustomDataItem>,
-) -> Result<HashMap<String, StorageCustomDataItem>> {
+) -> Result<BTreeMap<String, StorageCustomDataItem>> {
     m.iter()
         .map(|(k, v)| Ok((k.clone(), custom_data_item_to_storage(v))))
         .collect()
 }
 
 fn storage_to_custom_data_map(
-    m: &HashMap<String, StorageCustomDataItem>,
+    m: &BTreeMap<String, StorageCustomDataItem>,
 ) -> Result<HashMap<String, CustomDataItem>> {
     m.iter()
         .map(|(k, v)| Ok((k.clone(), storage_to_custom_data_item(v)?)))

@@ -566,7 +566,7 @@ pub fn merge_databases(
 mod tests {
     use super::*;
     use crate::storage::types::*;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use tempfile::TempDir;
 
     fn make_temp_store() -> (TempDir, GitStore) {
@@ -601,7 +601,7 @@ mod tests {
                 history_max_items: None,
                 history_max_size: None,
                 settings_changed: None,
-                custom_data: HashMap::new(),
+                custom_data: BTreeMap::new(),
             },
             root: StorageGroup {
                 uuid: "00000000-0000-0000-0000-000000000001".into(),
@@ -613,7 +613,7 @@ mod tests {
                 entries: vec![StorageEntry {
                     uuid: "00000000-0000-0000-0000-000000000002".into(),
                     fields: {
-                        let mut m = HashMap::new();
+                        let mut m = BTreeMap::new();
                         m.insert(
                             "Title".into(),
                             StorageValue {
@@ -641,7 +641,7 @@ mod tests {
                         expires: Some(false),
                         usage_count: Some(0),
                     },
-                    custom_data: HashMap::new(),
+                    custom_data: BTreeMap::new(),
                     icon_id: None,
                     custom_icon: None,
                     foreground_color: None,
@@ -649,7 +649,7 @@ mod tests {
                     override_url: None,
                     quality_check: None,
                     previous_parent_group: None,
-                    attachments: HashMap::new(),
+                    attachments: BTreeMap::new(),
                     history: vec![],
                 }],
                 times: StorageTimes {
@@ -661,7 +661,7 @@ mod tests {
                     expires: None,
                     usage_count: None,
                 },
-                custom_data: HashMap::new(),
+                custom_data: BTreeMap::new(),
                 is_expanded: true,
                 default_autotype_sequence: None,
                 enable_autotype: None,
@@ -670,7 +670,7 @@ mod tests {
                 tags: vec![],
                 previous_parent_group: None,
             },
-            deleted_objects: HashMap::new(),
+            deleted_objects: BTreeMap::new(),
         }
     }
 
@@ -838,7 +838,7 @@ mod tests {
         bob_db.root.entries.push(StorageEntry {
             uuid: "00000000-0000-0000-0000-000000000099".into(),
             fields: {
-                let mut m = HashMap::new();
+                let mut m = BTreeMap::new();
                 m.insert(
                     "Title".into(),
                     StorageValue {
@@ -859,7 +859,7 @@ mod tests {
                 expires: Some(false),
                 usage_count: Some(0),
             },
-            custom_data: HashMap::new(),
+            custom_data: BTreeMap::new(),
             icon_id: None,
             custom_icon: None,
             foreground_color: None,
@@ -867,7 +867,7 @@ mod tests {
             override_url: None,
             quality_check: None,
             previous_parent_group: None,
-            attachments: HashMap::new(),
+            attachments: BTreeMap::new(),
             history: vec![],
         });
 

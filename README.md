@@ -63,6 +63,7 @@ cargo run -- sync-local config.toml laptop ./laptop.kdbx
 Useful options:
 
 - `--once`: perform a single reconciliation and exit
+- `--poll`: also enable the local file polling probe for environments where filesystem notifications are unreliable
 - `--server-url URL`: connect to a different running server URL instead of inferring one from `bind_addr`
 
 Examples:
@@ -91,7 +92,7 @@ The database's master password/key file is still the KDBX master credential from
 
 - it downloads/uploads through the same authenticated server endpoints the clients use
 - remote branch changes are pushed to the CLI through a server event stream
-- local file changes are picked up from filesystem notifications, with a small safety-net detector to catch missed updates
+- local file changes are picked up from filesystem notifications by default, with optional polling fallback via `--poll`
 - if both sides diverge, it runs the same KeePass-level merge logic and updates both sides
 
 This is useful if you want branch-backed syncing without mounting WebDAV in your desktop workflow.

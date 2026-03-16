@@ -24,12 +24,13 @@ pub enum CliCommand {
         client_id: String,
         local_path: PathBuf,
         once: bool,
+        poll: bool,
         server_url: Option<String>,
     },
 }
 
 fn usage() -> &'static str {
-    "usage: kdbx-git [config.toml]\n       kdbx-git --init [config.toml]\n       kdbx-git sync-local [--once] [--server-url URL] [config.toml] <client-id> <local.kdbx>"
+    "usage: kdbx-git [config.toml]\n       kdbx-git --init [config.toml]\n       kdbx-git sync-local [--once] [--poll] [--server-url URL] [config.toml] <client-id> <local.kdbx>"
 }
 
 pub fn init_observability() -> Result<()> {
@@ -80,6 +81,7 @@ where
 
 fn parse_sync_local_args(args: &[String]) -> Result<CliCommand> {
     let mut once = false;
+    let mut poll = false;
     let mut server_url = None;
     let mut positionals = Vec::new();
     let mut i = 0;
@@ -88,6 +90,10 @@ fn parse_sync_local_args(args: &[String]) -> Result<CliCommand> {
         match args[i].as_str() {
             "--once" => {
                 once = true;
+                i += 1;
+            }
+            "--poll" => {
+                poll = true;
                 i += 1;
             }
             "--server-url" => {
@@ -129,6 +135,7 @@ fn parse_sync_local_args(args: &[String]) -> Result<CliCommand> {
         client_id,
         local_path,
         once,
+        poll,
         server_url,
     })
 }
@@ -147,6 +154,7 @@ where
             client_id,
             local_path,
             once,
+            poll,
             server_url,
         } => {
             sync::sync_local_from_config_path(
@@ -155,6 +163,7 @@ where
                     client_id,
                     local_path,
                     once,
+                    poll,
                     server_url,
                 },
             )
@@ -212,6 +221,7 @@ mod tests {
                 client_id: "alice".into(),
                 local_path: PathBuf::from("alice.kdbx"),
                 once: false,
+                poll: false,
                 server_url: None,
             }
         );
@@ -224,6 +234,7 @@ mod tests {
                 "kdbx-git".into(),
                 "sync-local".into(),
                 "--once".into(),
+                "--poll".into(),
                 "--server-url".into(),
                 "https://example.test".into(),
                 "custom.toml".into(),
@@ -236,6 +247,7 @@ mod tests {
                 client_id: "alice".into(),
                 local_path: PathBuf::from("alice.kdbx"),
                 once: true,
+                poll: true,
                 server_url: Some("https://example.test".into()),
             }
         );

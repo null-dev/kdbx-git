@@ -54,6 +54,7 @@ fn spawn_sync(
                 client_id: "alice".into(),
                 local_path,
                 once: false,
+                poll: false,
                 server_url: Some(server_url),
             },
             ready_tx,
@@ -82,6 +83,7 @@ async fn sync_local_pushes_local_file_into_server_over_http() {
             client_id: "alice".into(),
             local_path: local_path.clone(),
             once: true,
+            poll: false,
             server_url: Some(server.base_url.clone()),
         },
     )
@@ -133,6 +135,7 @@ async fn sync_local_pulls_server_state_into_missing_file_over_http() {
             client_id: "alice".into(),
             local_path: local_path.clone(),
             once: true,
+            poll: false,
             server_url: Some(server.base_url.clone()),
         },
     )
@@ -169,6 +172,7 @@ async fn sync_local_reacts_to_remote_server_updates() {
             client_id: "alice".into(),
             local_path: local_path.clone(),
             once: true,
+            poll: false,
             server_url: Some(server.base_url.clone()),
         },
     )
@@ -233,6 +237,7 @@ async fn sync_local_reacts_to_local_file_updates() {
             client_id: "alice".into(),
             local_path: local_path.clone(),
             once: true,
+            poll: false,
             server_url: Some(server.base_url.clone()),
         },
     )

@@ -33,6 +33,7 @@ pub struct SyncLocalOptions {
     pub client_id: String,
     pub local_path: PathBuf,
     pub once: bool,
+    pub poll: bool,
     pub server_url: Option<String>,
 }
 
@@ -111,10 +112,12 @@ async fn run_sync_local(
         syncer.client.password.clone(),
         tx.clone(),
     ));
-    let local_probe = tokio::spawn(run_local_change_probe(
-        syncer.options.local_path.clone(),
-        tx.clone(),
-    ));
+    let local_probe = syncer.options.poll.then(|| {
+        tokio::spawn(run_local_change_probe(
+            syncer.options.local_path.clone(),
+            tx.clone(),
+        ))
+    });
 
     let _watcher = watcher;
     if let Some(ready) = ready {
@@ -140,7 +143,9 @@ async fn run_sync_local(
     }
 
     remote_task.abort();
-    local_probe.abort();
+    if let Some(local_probe) = local_probe {
+        local_probe.abort();
+    }
     Ok(())
 }
 

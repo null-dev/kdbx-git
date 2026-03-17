@@ -1,7 +1,6 @@
 use eyre::Result;
-use kdbx_git_common::kdbx::KdbxCredentials;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Top-level sync-local client configuration, loaded from a TOML file.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -32,15 +31,5 @@ impl Config {
         let contents = std::fs::read_to_string(path)?;
         let config: Config = toml::from_str(&contents)?;
         Ok(config)
-    }
-}
-
-impl KdbxCredentials for DatabaseCredentials {
-    fn password(&self) -> Option<&str> {
-        self.password.as_deref()
-    }
-
-    fn keyfile(&self) -> Option<&Path> {
-        self.keyfile.as_deref()
     }
 }

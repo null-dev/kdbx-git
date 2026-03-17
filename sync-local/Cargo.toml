@@ -16,7 +16,5 @@ toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-kdbx-git-common.workspace = true
-
 [dev-dependencies]
 tempfile.workspace = true

@@ -8,7 +8,7 @@ Each client gets its own branch and WebDAV credentials:
 - the server merges the client branch into `main`
 - successful `main` updates are fanned back out to the other client branches
 
-The git store uses pretty JSON by default so the history stays readable with normal git tooling.
+The state of the KDBX database is stored unencrypted in the git store as pretty JSON by default so the history is readable with normal git tooling.
 
 ## Configuration
 

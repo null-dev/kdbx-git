@@ -43,12 +43,12 @@ Tests marked ✅ are already implemented. All others need to be written.
 
 ## WebDAV — Data integrity / round-trip
 
-- [ ] Entry with nested groups survives PUT → GET round-trip with structure intact
-- [ ] Entry with custom fields survives round-trip
-- [ ] Entry deletion: alice deletes an entry and PUTs; bob GETs and does not see the deleted entry (DeletedObjects respected)
-- [ ] Entry modification: alice modifies a field and PUTs; bob GETs and sees the updated value
-- [ ] Conflicting edits to the same entry UUID: alice and bob each modify the same entry independently; alice GETs after bob writes and receives a deterministically merged result
-- [ ] Database name metadata survives round-trip
+- ✅ Entry with nested groups survives PUT → GET round-trip with structure intact
+- ✅ Entry with custom fields survives round-trip
+- ✅ Entry deletion: alice deletes an entry and PUTs; bob GETs and does not see the deleted entry (DeletedObjects respected)
+- ✅ Entry modification: alice modifies a field and PUTs; bob GETs and sees the updated value
+- ✅ Conflicting edits to the same entry UUID: alice and bob each modify the same entry independently; alice GETs after bob writes and receives a deterministically merged result
+- ✅ Database name metadata survives round-trip
 
 ---
 

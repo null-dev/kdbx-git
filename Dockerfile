@@ -2,9 +2,11 @@ FROM rust:1.86-bookworm AS builder
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
-COPY src ./src
+COPY common ./common
+COPY server ./server
+COPY sync-local ./sync-local
 
-RUN cargo build --locked --release
+RUN cargo build --locked --release -p kdbx-git
 
 FROM debian:bookworm-slim
 RUN apt-get update \

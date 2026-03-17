@@ -273,7 +273,10 @@ pub fn sync_local_binary() -> &'static Path {
             return PathBuf::from(path);
         }
 
-        let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("server crate should have a workspace parent")
+            .to_path_buf();
         let target_dir = std::env::var_os("CARGO_TARGET_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| workspace_root.join("target"));

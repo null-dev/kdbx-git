@@ -1413,6 +1413,68 @@ async fn sync_local_identical_resave_does_not_create_server_commit() {
 
 #[serial_test::serial]
 #[tokio::test]
+async fn sync_local_reverting_to_old_local_state_after_remote_update_pushes_again() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let proxy = ProxyServer::start(server.base_url.clone(), false).await;
+    let client = Client::new();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+
+    let (sync_task, ready_rx) =
+        spawn_sync(config.clone(), local_path.clone(), proxy.base_url.clone());
+    ready_rx.await.unwrap();
+
+    let alice_bytes =
+        build_kdbx_bytes(&sample_db("Local Push DB", "Alice Entry"), &config.database);
+    tokio::fs::write(&local_path, &alice_bytes).await.unwrap();
+
+    wait_for(|| {
+        let proxy = &proxy;
+        async move { proxy.alice_put_count() >= 1 }
+    })
+    .await;
+
+    let bob_db = sample_db("Remote Update DB", "Bob Entry");
+    let bob_put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(bob_put.status().is_success());
+
+    wait_for(|| {
+        let local_path = local_path.clone();
+        let database = config.database.clone();
+        async move {
+            match tokio::fs::read(&local_path).await {
+                Ok(bytes) => entry_titles(&parse_kdbx_bytes(&bytes, &database))
+                    .contains(&"Bob Entry".to_string()),
+                Err(_) => false,
+            }
+        }
+    })
+    .await;
+
+    tokio::fs::write(&local_path, &alice_bytes).await.unwrap();
+
+    wait_for(|| {
+        let proxy = &proxy;
+        async move { proxy.alice_put_count() >= 2 }
+    })
+    .await;
+
+    sync_task.abort();
+}
+
+#[serial_test::serial]
+#[tokio::test]
 async fn sync_local_alice_push_eventually_updates_bobs_local_file() {
     let tempdir = TempDir::new().unwrap();
     let config = test_config(tempdir.path(), None);

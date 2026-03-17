@@ -223,12 +223,10 @@ struct RemoteSyncer {
     options: SyncLocalOptions,
     /// Path to the JSON state file used for interrupt recovery.
     state_path: PathBuf,
-    /// Hash of the last bytes we wrote to the local file, used to suppress
-    /// watcher events caused by our own writes.
-    last_written_hash: Option<u64>,
-    /// Hash of the last bytes we successfully pushed to the server, used to
-    /// suppress repeated local save events that do not change content.
-    last_pushed_hash: Option<u64>,
+    /// Hash of the last content known to be in sync with the server.
+    ///
+    /// This is updated after successful local pushes and after pull writes
+    last_synced_hash: Option<u64>,
 }
 
 impl RemoteSyncer {
@@ -245,8 +243,7 @@ impl RemoteSyncer {
             base_url: base_url.trim_end_matches('/').to_string(),
             state_path,
             options,
-            last_written_hash: None,
-            last_pushed_hash: None,
+            last_synced_hash: None,
         }
     }
 
@@ -382,15 +379,10 @@ impl RemoteSyncer {
             }
         };
 
-        // Suppress events caused by our own atomic writes.
+        // Suppress repeated local save events for content we already know is
+        // in sync with the server, including our own pull writes.
         let hash = bytes_signature(&bytes);
-        if Some(hash) == self.last_written_hash {
-            return Ok(());
-        }
-
-        // If the local bytes are unchanged since the last successful push,
-        // skip re-uploading them even if the editor emitted another save event.
-        if Some(hash) == self.last_pushed_hash {
+        if Some(hash) == self.last_synced_hash {
             return Ok(());
         }
 
@@ -410,7 +402,7 @@ impl RemoteSyncer {
 
         match response.status() {
             s if s.is_success() => {
-                self.last_pushed_hash = Some(hash);
+                self.last_synced_hash = Some(hash);
                 Ok(())
             }
             StatusCode::UNAUTHORIZED => bail!("server rejected sync-local credentials"),
@@ -543,7 +535,7 @@ impl RemoteSyncer {
             .await
             .wrap_err_with(|| format!("failed to rename temp file to {}", path.display()))?;
 
-        self.last_written_hash = Some(bytes_signature(bytes));
+        self.last_synced_hash = Some(bytes_signature(bytes));
         Ok(())
     }
 }

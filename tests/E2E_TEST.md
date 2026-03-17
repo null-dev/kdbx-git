@@ -36,10 +36,10 @@ Tests marked ✅ are already implemented. All others need to be written.
 ## WebDAV — Auth
 
 - ✅ `auth_failures_return_basic_auth_challenge` — no credentials → 401 with `WWW-Authenticate: Basic`; wrong password → 401
-- [ ] Correct credentials for client A do not grant access to client B's DAV endpoint (cross-client isolation)
-- [ ] Username belonging to client A with client B's password is rejected
-- [ ] Credentials are case-sensitive (wrong-cased password → 401)
-- [ ] Requests to unknown client paths (`/dav/nobody/database.kdbx`) return 401
+- ✅ Correct credentials for client A do not grant access to client B's DAV endpoint (cross-client isolation)
+- ✅ Username belonging to client A with client B's password is rejected
+- ✅ Credentials are case-sensitive (wrong-cased password → 401)
+- ✅ Requests to unknown client paths (`/dav/nobody/database.kdbx`) return 401
 
 ## WebDAV — Data integrity / round-trip
 

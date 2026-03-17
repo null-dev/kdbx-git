@@ -1326,3 +1326,101 @@ async fn auth_failures_return_basic_auth_challenge() {
     .unwrap();
     assert_eq!(wrong_auth.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn correct_credentials_do_not_grant_access_to_another_clients_dav_endpoint() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config, tempdir).await.unwrap();
+    let client = Client::new();
+
+    let response = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::WWW_AUTHENTICATE)
+            .and_then(|value| value.to_str().ok()),
+        Some("Basic realm=\"kdbx-git\"")
+    );
+}
+
+#[tokio::test]
+async fn username_from_one_client_with_another_clients_password_is_rejected() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config, tempdir).await.unwrap();
+    let client = Client::new();
+
+    let response = authed(
+        &client,
+        "alice-user",
+        "bob-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn credentials_are_case_sensitive() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config, tempdir).await.unwrap();
+    let client = Client::new();
+
+    let response = authed(
+        &client,
+        "alice-user",
+        "Alice-Pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn unknown_client_paths_return_unauthorized() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config, tempdir).await.unwrap();
+    let client = Client::new();
+
+    let response = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/nobody/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::WWW_AUTHENTICATE)
+            .and_then(|value| value.to_str().ok()),
+        Some("Basic realm=\"kdbx-git\"")
+    );
+}

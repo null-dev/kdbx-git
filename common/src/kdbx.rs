@@ -4,7 +4,7 @@
 //! using keepass-nd's `Database::save` / `Database::open`.
 
 use crate::{
-    config::DatabaseCredentials,
+    database::DatabaseCredentials,
     storage::{
         convert::{db_to_storage, storage_to_db},
         types::StorageDatabase,

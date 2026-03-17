@@ -10,7 +10,7 @@ Each client gets its own branch and WebDAV credentials:
 
 The state of the KDBX database is stored unencrypted in the git store as pretty JSON by default so the history is readable with normal git tooling.
 
-## Configuration
+## Server Configuration
 
 Create a `config.toml` like this:
 
@@ -40,40 +40,51 @@ Notes:
 - `database.password` / `database.keyfile` are the master credentials used to decrypt uploads and re-encrypt downloads.
 - `git_store` is a bare repo, so inspect it with commands like `git --git-dir ./store.git log --stat main`.
 
+## Sync-Local Client Configuration
+
+Create a separate client config for each `sync-local` instance:
+
+```toml
+server_url = "http://127.0.0.1:8080"
+client_id = "laptop"
+username = "laptop"
+password = "laptop-webdav-password"
+
+[database]
+password = "correct horse battery staple"
+# keyfile = "./database.keyx"
+```
+
 ## Usage
 
 Import an existing KDBX file into the git store:
 
 ```bash
-cargo run -- --init config.toml
+cargo run -p kdbx-git -- --init config.toml
 ```
 
 Start the server:
 
 ```bash
-cargo run -- config.toml
+cargo run -p kdbx-git -- config.toml
 ```
 
 Keep a local file in sync with a client branch through the running server:
 
 ```bash
-cargo run -- sync-local config.toml laptop ./laptop.kdbx
+cargo run -p kdbx-git-sync-local -- client.toml ./laptop.kdbx
 ```
 
 Useful options:
 
 - `--once`: perform a single reconciliation and exit
 - `--poll`: also enable the local file polling probe for environments where filesystem notifications are unreliable
-- `--server-url URL`: connect to a different running server URL instead of inferring one from `bind_addr`
 
 Examples:
 
 ```bash
 # Pull or push once, then exit
-cargo run -- sync-local --once config.toml laptop ./laptop.kdbx
-
-# Connect to a separately hosted server instance
-cargo run -- sync-local --server-url https://vault.example.com config.toml laptop ./laptop.kdbx
+cargo run -p kdbx-git-sync-local -- --once client.toml ./laptop.kdbx
 ```
 
 ## KeePass Client Setup
@@ -88,7 +99,7 @@ The database's master password/key file is still the KDBX master credential from
 
 ## Local File Sync
 
-`sync-local` keeps a local `.kdbx` file and a single client branch in sync through the server:
+`kdbx-git-sync-local` keeps a local `.kdbx` file and a single client branch in sync through the server:
 
 - it downloads/uploads through the same authenticated server endpoints the clients use
 - remote branch changes are pushed to the CLI through a server event stream

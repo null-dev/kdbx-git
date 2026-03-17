@@ -1,7 +1,6 @@
 use std::{
     collections::{hash_map::DefaultHasher, VecDeque},
     hash::{Hash, Hasher},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -19,14 +18,14 @@ use tokio::{
 };
 use tracing::{info, warn};
 
-use crate::config::{ClientConfig, Config};
+use crate::config::Config;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncLocalOptions {
     pub client_id: String,
     pub local_path: PathBuf,
     pub once: bool,
-    /// Retained for CLI compatibility but unused in the new pull-only design.
+    /// Periodically check the local file for changes in addition to fs events.
     pub poll: bool,
     pub server_url: Option<String>,
 }
@@ -96,23 +95,24 @@ async fn run_sync_local(
     options: SyncLocalOptions,
     ready: Option<oneshot::Sender<()>>,
 ) -> Result<()> {
-    let client = config
-        .clients
-        .iter()
-        .find(|client| client.id == options.client_id)
-        .cloned()
-        .ok_or_else(|| eyre::eyre!("unknown client id '{}'", options.client_id))?;
+    if options.client_id != config.client_id {
+        bail!(
+            "sync-local client id '{}' does not match config client id '{}'",
+            options.client_id,
+            config.client_id
+        );
+    }
 
     let base_url = options
         .server_url
         .clone()
-        .unwrap_or_else(|| infer_server_url(&config.bind_addr));
+        .unwrap_or_else(|| config.server_url.clone());
 
     let http = Client::builder()
         .build()
         .wrap_err("failed to build HTTP client")?;
 
-    let mut syncer = RemoteSyncer::new(client, http, base_url, options);
+    let mut syncer = RemoteSyncer::new(config, http, base_url, options);
 
     // On startup: handle any pending promote from a previous interrupted run,
     // then perform an initial merge-from-main.
@@ -130,11 +130,18 @@ async fn run_sync_local(
     let watcher = start_local_watcher(syncer.options.local_path.clone(), tx.clone()).await?;
     let _watcher = watcher; // keep alive
 
+    let poll_task = syncer.options.poll.then(|| {
+        tokio::spawn(run_local_poll_listener(
+            syncer.options.local_path.clone(),
+            tx.clone(),
+        ))
+    });
+
     let remote_task = tokio::spawn(run_remote_event_listener(
         syncer.http.clone(),
         syncer.events_url(),
-        syncer.client.username.clone(),
-        syncer.client.password.clone(),
+        syncer.config.username.clone(),
+        syncer.config.password.clone(),
         tx.clone(),
     ));
 
@@ -201,6 +208,9 @@ async fn run_sync_local(
                 Err(e) if e.downcast_ref::<BranchConflictError>().is_some() => {
                     // Fatal: branch was modified unexpectedly.
                     remote_task.abort();
+                    if let Some(poll_task) = &poll_task {
+                        poll_task.abort();
+                    }
                     return Err(e);
                 }
                 Err(e) => {
@@ -211,13 +221,16 @@ async fn run_sync_local(
     }
 
     remote_task.abort();
+    if let Some(poll_task) = poll_task {
+        poll_task.abort();
+    }
     Ok(())
 }
 
 // ── RemoteSyncer ──────────────────────────────────────────────────────────────
 
 struct RemoteSyncer {
-    client: ClientConfig,
+    config: Config,
     http: Client,
     base_url: String,
     options: SyncLocalOptions,
@@ -230,15 +243,10 @@ struct RemoteSyncer {
 }
 
 impl RemoteSyncer {
-    fn new(
-        client: ClientConfig,
-        http: Client,
-        base_url: String,
-        options: SyncLocalOptions,
-    ) -> Self {
+    fn new(config: Config, http: Client, base_url: String, options: SyncLocalOptions) -> Self {
         let state_path = PathBuf::from(format!("{}.sync-state.json", options.local_path.display()));
         Self {
-            client,
+            config,
             http,
             base_url: base_url.trim_end_matches('/').to_string(),
             state_path,
@@ -394,7 +402,7 @@ impl RemoteSyncer {
         let response = self
             .http
             .put(self.dav_url())
-            .basic_auth(&self.client.username, Some(&self.client.password))
+            .basic_auth(&self.config.username, Some(&self.config.password))
             .body(bytes)
             .send()
             .await
@@ -420,7 +428,7 @@ impl RemoteSyncer {
         let response = self
             .http
             .post(self.merge_from_main_url())
-            .basic_auth(&self.client.username, Some(&self.client.password))
+            .basic_auth(&self.config.username, Some(&self.config.password))
             .send()
             .await
             .wrap_err("failed to contact merge-from-main endpoint")?;
@@ -500,7 +508,7 @@ impl RemoteSyncer {
         let response = self
             .http
             .post(url)
-            .basic_auth(&self.client.username, Some(&self.client.password))
+            .basic_auth(&self.config.username, Some(&self.config.password))
             .send()
             .await
             .wrap_err("failed to contact promote-merge endpoint")?;
@@ -589,6 +597,46 @@ fn should_trigger_local_sync(event: &notify::Event) -> bool {
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocalPollFingerprint {
+    exists: bool,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+async fn run_local_poll_listener(local_path: PathBuf, tx: mpsc::UnboundedSender<SyncTrigger>) {
+    let mut last_seen = local_poll_fingerprint(&local_path).await;
+
+    loop {
+        sleep(Duration::from_secs(1)).await;
+
+        if tx.is_closed() {
+            return;
+        }
+
+        let next = local_poll_fingerprint(&local_path).await;
+        if next != last_seen {
+            last_seen = next;
+            let _ = tx.send(SyncTrigger::LocalFileChanged);
+        }
+    }
+}
+
+async fn local_poll_fingerprint(local_path: &Path) -> LocalPollFingerprint {
+    match fs::metadata(local_path).await {
+        Ok(metadata) => LocalPollFingerprint {
+            exists: true,
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        },
+        Err(_) => LocalPollFingerprint {
+            exists: false,
+            len: 0,
+            modified: None,
+        },
+    }
+}
+
 // ── SSE event listener ────────────────────────────────────────────────────────
 
 async fn run_remote_event_listener(
@@ -664,23 +712,6 @@ fn bytes_signature(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
-fn infer_server_url(bind_addr: &str) -> String {
-    if bind_addr.contains("://") {
-        return bind_addr.trim_end_matches('/').to_string();
-    }
-
-    if let Ok(addr) = bind_addr.parse::<SocketAddr>() {
-        let host = match addr.ip() {
-            IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
-            IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
-            other => other,
-        };
-        return format!("http://{}:{}", host, addr.port());
-    }
-
-    format!("http://{}", bind_addr.trim_end_matches('/'))
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -690,19 +721,6 @@ mod tests {
     use tempfile::TempDir;
     use tokio::sync::mpsc;
     use tokio::time::timeout;
-
-    #[test]
-    fn infer_server_url_uses_loopback_for_wildcard_bind() {
-        assert_eq!(infer_server_url("0.0.0.0:8080"), "http://127.0.0.1:8080");
-    }
-
-    #[test]
-    fn infer_server_url_keeps_explicit_urls() {
-        assert_eq!(
-            infer_server_url("https://example.com/base/"),
-            "https://example.com/base"
-        );
-    }
 
     #[tokio::test]
     async fn remote_listener_parses_main_branch_updates() {

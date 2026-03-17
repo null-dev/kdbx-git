@@ -1,10 +1,10 @@
 use std::path::Path;
 
+use crate::config::Config;
 use color_eyre::eyre::{Context, Result};
+use kdbx_git_common::{kdbx::parse_kdbx_sync, store::GitStore};
 use tokio::task::spawn_blocking;
 use tracing::info;
-
-use crate::{config::Config, kdbx::parse_kdbx_sync, store::GitStore};
 
 pub async fn init_from_config_path(config_path: &Path) -> Result<()> {
     let config = Config::from_file(config_path)?;

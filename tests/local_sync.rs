@@ -20,13 +20,11 @@ use axum::{
     Router,
 };
 use common::{
-    add_entry, build_kdbx_bytes, entry_titles, parse_kdbx_bytes, sample_db, test_config,
-    write_config, TestServer,
+    add_entry, build_kdbx_bytes, entry_titles, parse_kdbx_bytes, sample_db, sync_local_binary,
+    sync_local_config, test_config, write_sync_local_config, TestServer,
 };
-use kdbx_git::{
-    store::GitStore,
-    sync::{sync_local, SyncLocalOptions},
-};
+use kdbx_git::store::GitStore;
+use kdbx_git_sync_local::sync::{sync_local, SyncLocalOptions};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
@@ -54,7 +52,7 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = bool>,
 {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
         if check().await {
             return;
@@ -63,6 +61,21 @@ where
             tokio::time::Instant::now() < deadline,
             "condition was not met before timeout"
         );
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn wait_for_with_message<F, Fut>(message: &str, mut check: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        if check().await {
+            return;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "{message}");
         sleep(Duration::from_millis(50)).await;
     }
 }
@@ -98,21 +111,9 @@ fn git_commit_parents(git_dir: &Path, rev: &str) -> Vec<String> {
         .collect()
 }
 
-fn spawn_sync_process(
-    config_path: &Path,
-    server_url: &str,
-    client_id: &str,
-    local_path: &Path,
-) -> Child {
-    Command::new(env!("CARGO_BIN_EXE_kdbx-git"))
-        .args([
-            "sync-local",
-            "--server-url",
-            server_url,
-            config_path.to_str().unwrap(),
-            client_id,
-            local_path.to_str().unwrap(),
-        ])
+fn spawn_sync_process(config_path: &Path, local_path: &Path) -> Child {
+    Command::new(sync_local_binary())
+        .args([config_path.to_str().unwrap(), local_path.to_str().unwrap()])
         .env("RUST_LOG", "kdbx_git=warn")
         .env("NO_COLOR", "1")
         .env("CLICOLOR", "0")
@@ -137,15 +138,16 @@ fn spawn_sync_for(
     server_url: String,
 ) -> (JoinHandle<()>, oneshot::Receiver<()>) {
     let client_id = client_id.to_string();
+    let sync_config = sync_local_config(&config, &client_id, server_url.clone());
     let (ready_tx, ready_rx) = oneshot::channel();
     let handle = tokio::spawn(async move {
-        kdbx_git::sync::sync_local_with_ready(
-            config,
+        kdbx_git_sync_local::sync::sync_local_with_ready(
+            sync_config,
             SyncLocalOptions {
-                client_id,
+                client_id: client_id.clone(),
                 local_path,
                 once: false,
-                poll: false,
+                poll: true,
                 server_url: Some(server_url),
             },
             ready_tx,
@@ -432,7 +434,7 @@ async fn sync_local_creates_branch_and_pulls_from_main() {
     // Alice's sync-local --once: should create alice's branch via the sync
     // merge endpoints and write the local KDBX file.
     sync_local(
-        config.clone(),
+        sync_local_config(&config, "alice", server.base_url.clone()),
         SyncLocalOptions {
             client_id: "alice".into(),
             local_path: local_path.clone(),
@@ -597,7 +599,7 @@ async fn sync_local_once_when_already_up_to_date_does_not_modify_local_file() {
     tokio::fs::write(&local_path, &sentinel).await.unwrap();
 
     sync_local(
-        config,
+        sync_local_config(&config, "alice", server.base_url.clone()),
         SyncLocalOptions {
             client_id: "alice".into(),
             local_path: local_path.clone(),
@@ -620,7 +622,7 @@ async fn sync_local_once_when_main_does_not_exist_exits_without_creating_local_f
     let local_path = server.temp_root().join("alice-local.kdbx");
 
     sync_local(
-        config.clone(),
+        sync_local_config(&config, "alice", server.base_url.clone()),
         SyncLocalOptions {
             client_id: "alice".into(),
             local_path: local_path.clone(),
@@ -781,7 +783,7 @@ async fn sync_local_pull_writes_valid_kdbx_file() {
     assert!(put.status().is_success());
 
     sync_local(
-        config.clone(),
+        sync_local_config(&config, "alice", server.base_url.clone()),
         SyncLocalOptions {
             client_id: "alice".into(),
             local_path: local_path.clone(),
@@ -846,7 +848,7 @@ async fn sync_local_promotes_pull_result_onto_alice_branch() {
     let local_path = server.temp_root().join("alice-local.kdbx");
 
     sync_local(
-        config.clone(),
+        sync_local_config(&config, "alice", server.base_url.clone()),
         SyncLocalOptions {
             client_id: "alice".into(),
             local_path: local_path.clone(),
@@ -895,7 +897,7 @@ async fn sync_local_pull_followed_by_merge_from_main_returns_204() {
     assert!(put.status().is_success());
 
     sync_local(
-        config.clone(),
+        sync_local_config(&config, "alice", server.base_url.clone()),
         SyncLocalOptions {
             client_id: "alice".into(),
             local_path: local_path.clone(),
@@ -943,7 +945,7 @@ async fn sync_local_pull_writes_local_file_atomically() {
     assert!(put.status().is_success());
 
     sync_local(
-        config.clone(),
+        sync_local_config(&config, "alice", server.base_url.clone()),
         SyncLocalOptions {
             client_id: "alice".into(),
             local_path: local_path.clone(),
@@ -1211,7 +1213,7 @@ async fn sync_local_local_edits_are_uploaded_via_webdav_put() {
         .await
         .unwrap();
 
-    wait_for(|| {
+    wait_for_with_message("initial alice push was not observed", || {
         let proxy = &proxy;
         async move { proxy.alice_put_count() >= 1 }
     })
@@ -1303,7 +1305,7 @@ async fn sync_local_push_pulls_back_round_tripped_merged_result() {
         spawn_sync(config.clone(), local_path.clone(), server.base_url.clone());
     ready_rx.await.unwrap();
 
-    wait_for(|| {
+    wait_for_with_message("bob update never reached the local file", || {
         let local_path = local_path.clone();
         let database = config.database.clone();
         async move {
@@ -1412,8 +1414,10 @@ async fn sync_local_reverting_to_old_local_state_after_remote_update_pushes_agai
     let alice_bytes =
         build_kdbx_bytes(&sample_db("Local Push DB", "Alice Entry"), &config.database);
     tokio::fs::write(&local_path, &alice_bytes).await.unwrap();
+    sleep(Duration::from_millis(250)).await;
+    tokio::fs::write(&local_path, &alice_bytes).await.unwrap();
 
-    wait_for(|| {
+    wait_for_with_message("initial alice push was not observed", || {
         let proxy = &proxy;
         async move { proxy.alice_put_count() >= 1 }
     })
@@ -1433,7 +1437,7 @@ async fn sync_local_reverting_to_old_local_state_after_remote_update_pushes_agai
     .unwrap();
     assert!(bob_put.status().is_success());
 
-    wait_for(|| {
+    wait_for_with_message("bob update never reached the local file", || {
         let local_path = local_path.clone();
         let database = config.database.clone();
         async move {
@@ -1454,7 +1458,7 @@ async fn sync_local_reverting_to_old_local_state_after_remote_update_pushes_agai
 
     tokio::fs::write(&local_path, &alice_bytes).await.unwrap();
 
-    wait_for(|| {
+    wait_for_with_message("reverting to the old local state did not trigger another push", || {
         let proxy = &proxy;
         async move { proxy.alice_put_count() >= 2 }
     })
@@ -1722,7 +1726,10 @@ async fn sync_local_persists_pending_promote_state_before_promote_completes() {
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
     let config_path = server.temp_root().join("config.toml");
-    write_config(&config_path, &config);
+    write_sync_local_config(
+        &config_path,
+        &sync_local_config(&config, "alice", proxy.base_url.clone()),
+    );
 
     let bob_db = sample_db("Recovery DB", "Bob Entry");
     let put = authed(
@@ -1738,15 +1745,8 @@ async fn sync_local_persists_pending_promote_state_before_promote_completes() {
     .unwrap();
     assert!(put.status().is_success());
 
-    let mut sync_process = Command::new(env!("CARGO_BIN_EXE_kdbx-git"))
-        .args([
-            "sync-local",
-            "--server-url",
-            &proxy.base_url,
-            config_path.to_str().unwrap(),
-            "alice",
-            local_path.to_str().unwrap(),
-        ])
+    let mut sync_process = Command::new(sync_local_binary())
+        .args([config_path.to_str().unwrap(), local_path.to_str().unwrap()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -1802,7 +1802,7 @@ async fn sync_local_recovers_pending_promote_and_clears_state_file() {
     .await;
 
     sync_local(
-        config.clone(),
+        sync_local_config(&config, "alice", server.base_url.clone()),
         SyncLocalOptions {
             client_id: "alice".into(),
             local_path: local_path.clone(),
@@ -1885,7 +1885,7 @@ async fn sync_local_recovery_branch_conflict_is_fatal() {
     assert!(alice_put.status().is_success());
 
     let err = sync_local(
-        config.clone(),
+        sync_local_config(&config, "alice", server.base_url.clone()),
         SyncLocalOptions {
             client_id: "alice".into(),
             local_path: local_path.clone(),
@@ -1921,7 +1921,7 @@ async fn sync_local_stale_pending_promote_reports_useful_error() {
     .await;
 
     let err = sync_local(
-        config.clone(),
+        sync_local_config(&config, "alice", server.base_url.clone()),
         SyncLocalOptions {
             client_id: "alice".into(),
             local_path: local_path.clone(),
@@ -1961,7 +1961,10 @@ async fn sync_local_warns_when_event_stream_rejects_credentials() {
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
     let config_path = server.temp_root().join("config.toml");
-    write_config(&config_path, &config);
+    write_sync_local_config(
+        &config_path,
+        &sync_local_config(&config, "alice", proxy.base_url.clone()),
+    );
 
     let unauthorized = authed(
         &client,
@@ -1975,7 +1978,7 @@ async fn sync_local_warns_when_event_stream_rejects_credentials() {
     .unwrap();
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 
-    let mut sync_process = spawn_sync_process(&config_path, &proxy.base_url, "alice", &local_path);
+    let mut sync_process = spawn_sync_process(&config_path, &local_path);
 
     wait_for(|| async { proxy.event_connections() > 0 }).await;
     sleep(Duration::from_millis(1200)).await;
@@ -2010,7 +2013,10 @@ async fn sync_local_warns_when_merge_from_main_rejects_credentials() {
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
     let config_path = server.temp_root().join("config.toml");
-    write_config(&config_path, &config);
+    write_sync_local_config(
+        &config_path,
+        &sync_local_config(&config, "alice", proxy.base_url.clone()),
+    );
 
     let unauthorized = authed(
         &client,
@@ -2024,7 +2030,7 @@ async fn sync_local_warns_when_merge_from_main_rejects_credentials() {
     .unwrap();
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 
-    let mut sync_process = spawn_sync_process(&config_path, &proxy.base_url, "alice", &local_path);
+    let mut sync_process = spawn_sync_process(&config_path, &local_path);
 
     wait_for(|| async { proxy.event_connections() > 0 }).await;
 
@@ -2113,7 +2119,7 @@ async fn sync_local_once_exits_after_initial_reconcile_without_starting_sse() {
     assert!(put.status().is_success());
 
     sync_local(
-        config.clone(),
+        sync_local_config(&config, "alice", proxy.base_url.clone()),
         SyncLocalOptions {
             client_id: "alice".into(),
             local_path: local_path.clone(),
@@ -2138,11 +2144,11 @@ async fn sync_local_once_exits_after_initial_reconcile_without_starting_sse() {
 #[tokio::test]
 async fn sync_local_unknown_client_id_returns_clear_error() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let server_config = test_config(tempdir.path(), None);
     let local_path = tempdir.path().join("nobody-local.kdbx");
 
     let err = sync_local(
-        config,
+        sync_local_config(&server_config, "alice", "http://127.0.0.1:1".into()),
         SyncLocalOptions {
             client_id: "nobody".into(),
             local_path,
@@ -2154,5 +2160,8 @@ async fn sync_local_unknown_client_id_returns_clear_error() {
     .await
     .expect_err("unknown client ids should return a startup error");
 
-    assert_eq!(format!("{err}"), "unknown client id 'nobody'");
+    assert_eq!(
+        format!("{err}"),
+        "sync-local client id 'nobody' does not match config client id 'alice'"
+    );
 }

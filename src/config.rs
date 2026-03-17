@@ -1,4 +1,5 @@
 use eyre::Result;
+pub use kdbx_git_common::database::DatabaseCredentials;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -13,17 +14,6 @@ pub struct Config {
     pub database: DatabaseCredentials,
     /// One entry per WebDAV client.
     pub clients: Vec<ClientConfig>,
-}
-
-/// Credentials for opening/saving the KDBX database.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct DatabaseCredentials {
-    /// Path to an existing KDBX database used by `--init`.
-    pub path: Option<PathBuf>,
-    /// Master password (optional if a key file is provided).
-    pub password: Option<String>,
-    /// Path to a KeePass key file (optional).
-    pub keyfile: Option<PathBuf>,
 }
 
 /// Per-client configuration.

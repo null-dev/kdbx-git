@@ -5,32 +5,18 @@ use tracing::info;
 
 pub mod config;
 pub mod init;
-pub mod kdbx;
 pub mod server;
-pub mod storage;
-pub mod store;
-pub mod sync;
+
+pub use kdbx_git_common::{kdbx, storage, store};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
-    Serve {
-        config_path: PathBuf,
-    },
-    Init {
-        config_path: PathBuf,
-    },
-    SyncLocal {
-        config_path: PathBuf,
-        client_id: String,
-        local_path: PathBuf,
-        once: bool,
-        poll: bool,
-        server_url: Option<String>,
-    },
+    Serve { config_path: PathBuf },
+    Init { config_path: PathBuf },
 }
 
 fn usage() -> &'static str {
-    "usage: kdbx-git [config.toml]\n       kdbx-git --init [config.toml]\n       kdbx-git sync-local [--once] [--poll] [--server-url URL] [config.toml] <client-id> <local.kdbx>"
+    "usage: kdbx-git [config.toml]\n       kdbx-git --init [config.toml]"
 }
 
 pub fn init_observability() -> Result<()> {
@@ -68,7 +54,9 @@ where
             }),
             _ => bail!(usage()),
         },
-        Some("sync-local" | "--sync-local") => parse_sync_local_args(&args[1..]),
+        Some("sync-local" | "--sync-local") => {
+            bail!("sync-local moved to the dedicated `kdbx-git-sync-local` binary")
+        }
         Some("--help" | "-h") if args.len() == 1 => {
             bail!(usage());
         }
@@ -77,67 +65,6 @@ where
         }),
         _ => bail!(usage()),
     }
-}
-
-fn parse_sync_local_args(args: &[String]) -> Result<CliCommand> {
-    let mut once = false;
-    let mut poll = false;
-    let mut server_url = None;
-    let mut positionals = Vec::new();
-    let mut i = 0;
-
-    while i < args.len() {
-        match args[i].as_str() {
-            "--once" => {
-                once = true;
-                i += 1;
-            }
-            "--poll" => {
-                poll = true;
-                i += 1;
-            }
-            "--server-url" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or_else(|| eyre::eyre!("--server-url requires a value"))?;
-                server_url = Some(value.clone());
-                i += 2;
-            }
-            value if value.starts_with("--server-url=") => {
-                let (_, raw) = value.split_once('=').unwrap();
-                server_url = Some(raw.to_string());
-                i += 1;
-            }
-            value if value.starts_with('-') => bail!("unknown sync-local flag: {value}"),
-            _ => {
-                positionals.push(args[i].clone());
-                i += 1;
-            }
-        }
-    }
-
-    let (config_path, client_id, local_path) = match positionals.as_slice() {
-        [client_id, local_path] => (
-            PathBuf::from("config.toml"),
-            client_id.clone(),
-            PathBuf::from(local_path),
-        ),
-        [config_path, client_id, local_path] => (
-            PathBuf::from(config_path),
-            client_id.clone(),
-            PathBuf::from(local_path),
-        ),
-        _ => bail!(usage()),
-    };
-
-    Ok(CliCommand::SyncLocal {
-        config_path,
-        client_id,
-        local_path,
-        once,
-        poll,
-        server_url,
-    })
 }
 
 pub async fn run_cli<I>(args: I) -> Result<()>
@@ -149,26 +76,6 @@ where
     match parse_cli_args(args)? {
         CliCommand::Serve { config_path } => serve_from_config_path(&config_path).await,
         CliCommand::Init { config_path } => init::init_from_config_path(&config_path).await,
-        CliCommand::SyncLocal {
-            config_path,
-            client_id,
-            local_path,
-            once,
-            poll,
-            server_url,
-        } => {
-            sync::sync_local_from_config_path(
-                &config_path,
-                sync::SyncLocalOptions {
-                    client_id,
-                    local_path,
-                    once,
-                    poll,
-                    server_url,
-                },
-            )
-            .await
-        }
     }
 }
 
@@ -207,49 +114,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_sync_local_with_defaults() {
-        assert_eq!(
-            parse_cli_args([
-                "kdbx-git".into(),
-                "sync-local".into(),
-                "alice".into(),
-                "alice.kdbx".into(),
-            ])
-            .unwrap(),
-            CliCommand::SyncLocal {
-                config_path: PathBuf::from("config.toml"),
-                client_id: "alice".into(),
-                local_path: PathBuf::from("alice.kdbx"),
-                once: false,
-                poll: false,
-                server_url: None,
-            }
-        );
-    }
-
-    #[test]
-    fn parses_sync_local_flags() {
-        assert_eq!(
-            parse_cli_args([
-                "kdbx-git".into(),
-                "sync-local".into(),
-                "--once".into(),
-                "--poll".into(),
-                "--server-url".into(),
-                "https://example.test".into(),
-                "custom.toml".into(),
-                "alice".into(),
-                "alice.kdbx".into(),
-            ])
-            .unwrap(),
-            CliCommand::SyncLocal {
-                config_path: PathBuf::from("custom.toml"),
-                client_id: "alice".into(),
-                local_path: PathBuf::from("alice.kdbx"),
-                once: true,
-                poll: true,
-                server_url: Some("https://example.test".into()),
-            }
-        );
+    fn sync_local_command_points_to_new_binary() {
+        let err = parse_cli_args(["kdbx-git".into(), "sync-local".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("kdbx-git-sync-local"));
     }
 }

@@ -1,49 +1,77 @@
-[package]
-name = "kdbx-git"
+[workspace]
+members = [".", "common", "sync-local"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
+
+[workspace.dependencies]
+axum = "0.8"
+base64 = "0.22"
+bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
+color-eyre = "0.6"
+dav-server = "0.11"
+eyre = "0.6"
+futures-util = "0.3"
+gix = "0.70"
+http = "1"
+keepass = { git = "https://github.com/null-dev/keepass-nd", features = ["save_kdbx4", "_merge"] }
+notify = "8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+kdbx-git-common = { path = "common" }
+kdbx-git-sync-local = { path = "sync-local" }
+
+serial_test = "3"
+tempfile = "3"
+
+[package]
+name = "kdbx-git"
+version.workspace = true
+edition.workspace = true
 
 [profile.dev]
 split-debuginfo = "unpacked"
 
 [dependencies]
-# KeePass (custom fork with merge support)
-keepass = { git = "https://github.com/null-dev/keepass-nd", features = ["save_kdbx4", "_merge"] }
+axum.workspace = true
+base64.workspace = true
+bytes.workspace = true
+color-eyre.workspace = true
+dav-server.workspace = true
+eyre.workspace = true
+futures-util.workspace = true
+gix.workspace = true
+http.workspace = true
+serde.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
-# Git storage
-gix = "0.70"
-
-# Serialization
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde_yaml = "0.9"
-toml = "0.8"
-
-# HTTP / WebDAV
-axum = "0.8"
-dav-server = "0.11"
-futures-util = "0.3"
-bytes = "1"
-http = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
-
-# Error handling
-eyre = "0.6"
-color-eyre = "0.6"
-
-# Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Async
-tokio = { version = "1", features = ["full"] }
-
-# Utilities
-uuid = { version = "1", features = ["v4", "serde"] }
-base64 = "0.22"
-chrono = { version = "0.4", features = ["serde"] }
-notify = "8"
+kdbx-git-common.workspace = true
 
 [dev-dependencies]
-serial_test = "3"
-tempfile = "3"
+axum.workspace = true
+color-eyre.workspace = true
+futures-util.workspace = true
+http.workspace = true
+keepass.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+kdbx-git-sync-local.workspace = true

@@ -3,6 +3,8 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    process::Command,
+    sync::OnceLock,
 };
 
 use color_eyre::eyre::Result;
@@ -15,6 +17,7 @@ use kdbx_git::{
     },
     store::GitStore,
 };
+use kdbx_git_sync_local::config::Config as SyncLocalConfig;
 use tempfile::TempDir;
 use tokio::{net::TcpListener, task::JoinHandle};
 
@@ -236,4 +239,67 @@ pub fn write_source_kdbx(path: &Path, db: &StorageDatabase, creds: &DatabaseCred
 pub fn write_config(path: &Path, config: &Config) {
     let contents = toml::to_string_pretty(config).expect("failed to serialize config");
     std::fs::write(path, contents).expect("failed to write config file");
+}
+
+pub fn sync_local_config(server: &Config, client_id: &str, server_url: String) -> SyncLocalConfig {
+    let client = server
+        .clients
+        .iter()
+        .find(|client| client.id == client_id)
+        .unwrap_or_else(|| panic!("missing test client configuration for '{client_id}'"));
+
+    SyncLocalConfig {
+        server_url,
+        client_id: client.id.clone(),
+        username: client.username.clone(),
+        password: client.password.clone(),
+        database: server.database.clone(),
+    }
+}
+
+pub fn write_sync_local_config(path: &Path, config: &SyncLocalConfig) {
+    let contents = toml::to_string_pretty(config).expect("failed to serialize sync-local config");
+    std::fs::write(path, contents).expect("failed to write sync-local config");
+}
+
+pub fn sync_local_binary() -> &'static Path {
+    static BIN: OnceLock<PathBuf> = OnceLock::new();
+
+    BIN.get_or_init(|| {
+        let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| workspace_root.join("target"));
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+        let binary_name = if cfg!(windows) {
+            "kdbx-git-sync-local.exe"
+        } else {
+            "kdbx-git-sync-local"
+        };
+        let binary_path = target_dir.join(profile).join(binary_name);
+
+        if binary_path.exists() {
+            return binary_path;
+        }
+
+        let status = Command::new("cargo")
+            .args([
+                "build",
+                "-p",
+                "kdbx-git-sync-local",
+                "--bin",
+                "kdbx-git-sync-local",
+            ])
+            .current_dir(&workspace_root)
+            .status()
+            .expect("failed to build sync-local binary");
+        assert!(status.success(), "failed to build sync-local binary");
+
+        binary_path
+    })
+    .as_path()
 }

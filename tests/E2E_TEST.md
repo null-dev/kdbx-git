@@ -56,15 +56,15 @@ Tests marked ✅ are already implemented. All others need to be written.
 
 - ✅ `sync_local_creates_branch_and_pulls_from_main` — `--once` when alice's branch doesn't exist; local file is written with main's content
 - ✅ `sync_local_updates_local_file_when_main_advances` — continuous mode; SSE event from bob's write causes alice's local file to be updated
-- [ ] `--once` when alice is already up to date (204 from merge-from-main) exits cleanly without writing/modifying the local file
-- [ ] `--once` when main does not exist exits cleanly and does not create the local file
-- [ ] Continuous mode: multiple rapid SSE events (main advances several times quickly) — all updates eventually reach the local file
-- [ ] After sync-local pulls, the local file is a valid KDBX that can be opened with the configured credentials
-- [ ] After sync-local pulls, alice's branch on the server points at the promoted merge commit
-- [ ] After sync-local promotes, a subsequent merge-from-main returns 204 (already up to date)
-- [ ] Local file is written atomically: a crash observer never sees a partial/corrupt write (file is either old or new, never truncated)
-- [ ] After pull, sync-local does not immediately push the file back (self-write suppression prevents an infinite loop)
-- [ ] SSE reconnect: if the event stream drops, sync-local reconnects and resumes receiving updates
+- ✅ `--once` when alice is already up to date (204 from merge-from-main) exits cleanly without writing/modifying the local file
+- ✅ `--once` when main does not exist exits cleanly and does not create the local file
+- ✅ Continuous mode: multiple rapid SSE events (main advances several times quickly) — all updates eventually reach the local file
+- ✅ After sync-local pulls, the local file is a valid KDBX that can be opened with the configured credentials
+- ✅ After sync-local pulls, alice's branch on the server points at the promoted merge commit
+- ✅ After sync-local promotes, a subsequent merge-from-main returns 204 (already up to date)
+- ✅ Local file is written atomically: a crash observer never sees a partial/corrupt write (file is either old or new, never truncated)
+- ✅ After pull, sync-local does not immediately push the file back (self-write suppression prevents an infinite loop)
+- ✅ SSE reconnect: if the event stream drops, sync-local reconnects and resumes receiving updates
 
 ## sync-local — Push (local file → server)
 

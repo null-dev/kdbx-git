@@ -1458,10 +1458,13 @@ async fn sync_local_reverting_to_old_local_state_after_remote_update_pushes_agai
 
     tokio::fs::write(&local_path, &alice_bytes).await.unwrap();
 
-    wait_for_with_message("reverting to the old local state did not trigger another push", || {
-        let proxy = &proxy;
-        async move { proxy.alice_put_count() >= 2 }
-    })
+    wait_for_with_message(
+        "reverting to the old local state did not trigger another push",
+        || {
+            let proxy = &proxy;
+            async move { proxy.alice_put_count() >= 2 }
+        },
+    )
     .await;
 
     sync_task.abort();

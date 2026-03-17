@@ -17,7 +17,7 @@ use kdbx_git::{
     },
     store::GitStore,
 };
-use kdbx_git_sync_local::config::Config as SyncLocalConfig;
+use kdbx_git_sync_local::config::{Config as SyncLocalConfig, DatabaseCredentials as SyncDbCreds};
 use tempfile::TempDir;
 use tokio::{net::TcpListener, task::JoinHandle};
 
@@ -253,7 +253,10 @@ pub fn sync_local_config(server: &Config, client_id: &str, server_url: String) -
         client_id: client.id.clone(),
         username: client.username.clone(),
         password: client.password.clone(),
-        database: server.database.clone(),
+        database: SyncDbCreds {
+            password: server.database.password.clone(),
+            keyfile: server.database.keyfile.clone(),
+        },
     }
 }
 

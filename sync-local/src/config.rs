@@ -1,6 +1,7 @@
 use eyre::Result;
-use kdbx_git_common::database::DatabaseCredentials;
+use kdbx_git_common::kdbx::KdbxCredentials;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 /// Top-level sync-local client configuration, loaded from a TOML file.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -17,10 +18,29 @@ pub struct Config {
     pub database: DatabaseCredentials,
 }
 
+/// Credentials for opening/saving the local KDBX database.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DatabaseCredentials {
+    /// Master password (optional if a key file is provided).
+    pub password: Option<String>,
+    /// Path to a KeePass key file (optional).
+    pub keyfile: Option<PathBuf>,
+}
+
 impl Config {
     pub fn from_file(path: &std::path::Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
         let config: Config = toml::from_str(&contents)?;
         Ok(config)
+    }
+}
+
+impl KdbxCredentials for DatabaseCredentials {
+    fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+
+    fn keyfile(&self) -> Option<&Path> {
+        self.keyfile.as_deref()
     }
 }

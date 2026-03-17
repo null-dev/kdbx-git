@@ -3,7 +3,7 @@ mod common;
 use std::{
     io::Write,
     path::Path,
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
@@ -98,6 +98,30 @@ fn git_commit_parents(git_dir: &Path, rev: &str) -> Vec<String> {
         .collect()
 }
 
+fn spawn_sync_process(
+    config_path: &Path,
+    server_url: &str,
+    client_id: &str,
+    local_path: &Path,
+) -> Child {
+    Command::new(env!("CARGO_BIN_EXE_kdbx-git"))
+        .args([
+            "sync-local",
+            "--server-url",
+            server_url,
+            config_path.to_str().unwrap(),
+            client_id,
+            local_path.to_str().unwrap(),
+        ])
+        .env("RUST_LOG", "kdbx_git=warn")
+        .env("NO_COLOR", "1")
+        .env("CLICOLOR", "0")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
 fn spawn_sync(
     config: kdbx_git::config::Config,
     local_path: std::path::PathBuf,
@@ -140,6 +164,19 @@ struct ProxyState {
     event_connections: Arc<AtomicUsize>,
     drop_first_events: Arc<AtomicBool>,
     alice_promote_status: Option<HttpStatusCode>,
+    alice_events_status: Option<HttpStatusCode>,
+    alice_merge_from_main_status: Option<HttpStatusCode>,
+    alice_merge_from_main_status_after: usize,
+    alice_merge_from_main_requests: Arc<AtomicUsize>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ProxyOptions {
+    drop_first_events: bool,
+    alice_promote_status: Option<HttpStatusCode>,
+    alice_events_status: Option<HttpStatusCode>,
+    alice_merge_from_main_status: Option<HttpStatusCode>,
+    alice_merge_from_main_status_after: usize,
 }
 
 struct ProxyServer {
@@ -151,14 +188,17 @@ struct ProxyServer {
 
 impl ProxyServer {
     async fn start(target_base_url: String, drop_first_events: bool) -> Self {
-        Self::start_with_options(target_base_url, drop_first_events, None).await
+        Self::start_with_options(
+            target_base_url,
+            ProxyOptions {
+                drop_first_events,
+                ..ProxyOptions::default()
+            },
+        )
+        .await
     }
 
-    async fn start_with_options(
-        target_base_url: String,
-        drop_first_events: bool,
-        alice_promote_status: Option<HttpStatusCode>,
-    ) -> Self {
+    async fn start_with_options(target_base_url: String, options: ProxyOptions) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
 
@@ -167,8 +207,12 @@ impl ProxyServer {
             client: Client::builder().build().unwrap(),
             alice_put_count: Arc::new(AtomicUsize::new(0)),
             event_connections: Arc::new(AtomicUsize::new(0)),
-            drop_first_events: Arc::new(AtomicBool::new(drop_first_events)),
-            alice_promote_status,
+            drop_first_events: Arc::new(AtomicBool::new(options.drop_first_events)),
+            alice_promote_status: options.alice_promote_status,
+            alice_events_status: options.alice_events_status,
+            alice_merge_from_main_status: options.alice_merge_from_main_status,
+            alice_merge_from_main_status_after: options.alice_merge_from_main_status_after,
+            alice_merge_from_main_requests: Arc::new(AtomicUsize::new(0)),
         };
 
         let app = Router::new()
@@ -213,12 +257,33 @@ async fn proxy_handler(State(state): State<ProxyState>, req: Request<Body>) -> i
 
     if path == "/sync/alice/events" {
         state.event_connections.fetch_add(1, Ordering::SeqCst);
+        if let Some(status) = state.alice_events_status {
+            return Response::builder()
+                .status(status)
+                .body(Body::empty())
+                .unwrap();
+        }
         if state.drop_first_events.swap(false, Ordering::SeqCst) {
             return Response::builder()
                 .status(HttpStatusCode::OK)
                 .header("content-type", "text/event-stream")
                 .body(Body::from("event: ready\ndata: 0\n\n"))
                 .unwrap();
+        }
+    }
+
+    if req.method() == reqwest::Method::POST && path == "/sync/alice/merge-from-main" {
+        let request_number = state
+            .alice_merge_from_main_requests
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
+        if let Some(status) = state.alice_merge_from_main_status {
+            if request_number > state.alice_merge_from_main_status_after {
+                return Response::builder()
+                    .status(status)
+                    .body(Body::empty())
+                    .unwrap();
+            }
         }
     }
 
@@ -1550,8 +1615,10 @@ async fn sync_local_persists_pending_promote_state_before_promote_completes() {
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let proxy = ProxyServer::start_with_options(
         server.base_url.clone(),
-        false,
-        Some(HttpStatusCode::INTERNAL_SERVER_ERROR),
+        ProxyOptions {
+            alice_promote_status: Some(HttpStatusCode::INTERNAL_SERVER_ERROR),
+            ..ProxyOptions::default()
+        },
     )
     .await;
     let client = Client::new();
@@ -1781,4 +1848,221 @@ async fn sync_local_stale_pending_promote_reports_useful_error() {
             || message.contains("500 Internal Server Error"),
         "error should explain the recovery failure: {message}"
     );
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_warns_when_event_stream_rejects_credentials() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let proxy = ProxyServer::start_with_options(
+        server.base_url.clone(),
+        ProxyOptions {
+            alice_events_status: Some(HttpStatusCode::UNAUTHORIZED),
+            ..ProxyOptions::default()
+        },
+    )
+    .await;
+    let client = Client::new();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+    let config_path = server.temp_root().join("config.toml");
+    write_config(&config_path, &config);
+
+    let unauthorized = authed(
+        &client,
+        "alice-user",
+        "wrong-pass",
+        reqwest::Method::GET,
+        &format!("{}/sync/alice/events", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let mut sync_process = spawn_sync_process(&config_path, &proxy.base_url, "alice", &local_path);
+
+    wait_for(|| async { proxy.event_connections() > 0 }).await;
+    sleep(Duration::from_millis(1200)).await;
+
+    let _ = sync_process.kill();
+    let output = sync_process.wait_with_output().unwrap();
+    let logs = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        logs.contains("sync-local remote event stream returned 401 Unauthorized"),
+        "expected warning about rejected event stream credentials, got: {logs}"
+    );
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_warns_when_merge_from_main_rejects_credentials() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let proxy = ProxyServer::start_with_options(
+        server.base_url.clone(),
+        ProxyOptions {
+            alice_merge_from_main_status: Some(HttpStatusCode::UNAUTHORIZED),
+            alice_merge_from_main_status_after: 1,
+            ..ProxyOptions::default()
+        },
+    )
+    .await;
+    let client = Client::new();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+    let config_path = server.temp_root().join("config.toml");
+    write_config(&config_path, &config);
+
+    let unauthorized = authed(
+        &client,
+        "alice-user",
+        "wrong-pass",
+        reqwest::Method::POST,
+        &format!("{}/sync/alice/merge-from-main", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let mut sync_process = spawn_sync_process(&config_path, &proxy.base_url, "alice", &local_path);
+
+    wait_for(|| async { proxy.event_connections() > 0 }).await;
+
+    let bob_db = sample_db("Shared DB", "Bob Entry");
+    let put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(put.status().is_success());
+
+    sleep(Duration::from_millis(1200)).await;
+
+    let _ = sync_process.kill();
+    let output = sync_process.wait_with_output().unwrap();
+    let logs = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        logs.contains("sync-local 'alice': server rejected sync-local credentials"),
+        "expected warning about rejected merge-from-main credentials, got: {logs}"
+    );
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_endpoints_reject_cross_client_credentials() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config, tempdir).await.unwrap();
+    let client = Client::new();
+
+    let events = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::GET,
+        &format!("{}/sync/bob/events", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(events.status(), StatusCode::UNAUTHORIZED);
+
+    let merge = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::POST,
+        &format!("{}/sync/bob/merge-from-main", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(merge.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_once_exits_after_initial_reconcile_without_starting_sse() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let proxy = ProxyServer::start(server.base_url.clone(), false).await;
+    let client = Client::new();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+
+    let bob_db = sample_db("Shared DB", "Bob Entry");
+    let put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(put.status().is_success());
+
+    sync_local(
+        config.clone(),
+        SyncLocalOptions {
+            client_id: "alice".into(),
+            local_path: local_path.clone(),
+            once: true,
+            poll: false,
+            server_url: Some(proxy.base_url.clone()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let local_bytes = tokio::fs::read(&local_path).await.unwrap();
+    let local_db = parse_kdbx_bytes(&local_bytes, &config.database);
+    assert!(entry_titles(&local_db).contains(&"Bob Entry".to_string()));
+    assert_eq!(
+        proxy.event_connections(),
+        0,
+        "--once should exit after the initial reconcile without opening SSE"
+    );
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_unknown_client_id_returns_clear_error() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let local_path = tempdir.path().join("nobody-local.kdbx");
+
+    let err = sync_local(
+        config,
+        SyncLocalOptions {
+            client_id: "nobody".into(),
+            local_path,
+            once: true,
+            poll: false,
+            server_url: None,
+        },
+    )
+    .await
+    .expect_err("unknown client ids should return a startup error");
+
+    assert_eq!(format!("{err}"), "unknown client id 'nobody'");
 }

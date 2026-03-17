@@ -87,11 +87,11 @@ Tests marked ✅ are already implemented. All others need to be written.
 
 ## sync-local — Auth & error handling
 
-- [ ] `/sync/{client_id}/events` with wrong credentials returns 401 and sync-local logs a warning
-- [ ] `/sync/{client_id}/merge-from-main` with wrong credentials returns 401 and sync-local logs a warning
-- [ ] Correct credentials for client A do not grant access to client B's sync endpoints
-- [ ] `--once` mode exits after the initial reconcile, even if SSE events arrive before shutdown
-- [ ] Unknown `client_id` in config returns a clear startup error, not a panic
+- ✅ `/sync/{client_id}/events` with wrong credentials returns 401 and sync-local logs a warning
+- ✅ `/sync/{client_id}/merge-from-main` with wrong credentials returns 401 and sync-local logs a warning
+- ✅ Correct credentials for client A do not grant access to client B's sync endpoints
+- ✅ `--once` mode exits after the initial reconcile, even if SSE events arrive before shutdown
+- ✅ Unknown `client_id` in config returns a clear startup error, not a panic
 
 ---
 

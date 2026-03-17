@@ -406,7 +406,6 @@ async fn request_pending_promote(client: &Client, base_url: &str) -> (Vec<u8>, T
 
 /// When alice's branch doesn't exist but main has content, sync-local --once
 /// should create alice's branch and write the merged content to the local file.
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_creates_branch_and_pulls_from_main() {
     let tempdir = TempDir::new().unwrap();
@@ -457,7 +456,6 @@ async fn sync_local_creates_branch_and_pulls_from_main() {
 /// When alice's branch is behind main, sync-local should pull the new content
 /// from the server and keep the local file up to date as main continues to
 /// advance (SSE-driven).
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_updates_local_file_when_main_advances() {
     let tempdir = TempDir::new().unwrap();
@@ -573,7 +571,6 @@ async fn sync_local_updates_local_file_when_main_advances() {
     let _ = sync_task.await;
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_once_when_already_up_to_date_does_not_modify_local_file() {
     let tempdir = TempDir::new().unwrap();
@@ -615,7 +612,6 @@ async fn sync_local_once_when_already_up_to_date_does_not_modify_local_file() {
     assert_eq!(tokio::fs::read(&local_path).await.unwrap(), sentinel);
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_once_when_main_does_not_exist_exits_without_creating_local_file() {
     let tempdir = TempDir::new().unwrap();
@@ -643,7 +639,6 @@ async fn sync_local_once_when_main_does_not_exist_exits_without_creating_local_f
     assert!(store.branch_tip_id("alice".into()).await.unwrap().is_none());
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_processes_multiple_rapid_sse_updates() {
     let tempdir = TempDir::new().unwrap();
@@ -763,7 +758,6 @@ async fn sync_local_processes_multiple_rapid_sse_updates() {
     sync_task.abort();
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_pull_writes_valid_kdbx_file() {
     let tempdir = TempDir::new().unwrap();
@@ -808,7 +802,6 @@ async fn sync_local_pull_writes_valid_kdbx_file() {
     );
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_promotes_pull_result_onto_alice_branch() {
     let tempdir = TempDir::new().unwrap();
@@ -879,7 +872,6 @@ async fn sync_local_promotes_pull_result_onto_alice_branch() {
     assert!(parents.contains(&main_tip.to_hex().to_string()));
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_pull_followed_by_merge_from_main_returns_204() {
     let tempdir = TempDir::new().unwrap();
@@ -928,7 +920,6 @@ async fn sync_local_pull_followed_by_merge_from_main_returns_204() {
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_pull_writes_local_file_atomically() {
     let tempdir = TempDir::new().unwrap();
@@ -1071,7 +1062,6 @@ async fn sync_local_pull_writes_local_file_atomically() {
     );
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_pull_does_not_immediately_push_file_back_to_server() {
     let tempdir = TempDir::new().unwrap();
@@ -1121,7 +1111,6 @@ async fn sync_local_pull_does_not_immediately_push_file_back_to_server() {
     );
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_reconnects_sse_and_receives_later_updates() {
     let tempdir = TempDir::new().unwrap();
@@ -1204,7 +1193,6 @@ async fn sync_local_reconnects_sse_and_receives_later_updates() {
     assert!(proxy.event_connections() >= 2);
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_local_edits_are_uploaded_via_webdav_put() {
     let tempdir = TempDir::new().unwrap();
@@ -1258,7 +1246,6 @@ async fn sync_local_local_edits_are_uploaded_via_webdav_put() {
     sync_task.abort();
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_local_push_advances_main() {
     let tempdir = TempDir::new().unwrap();
@@ -1290,7 +1277,6 @@ async fn sync_local_local_push_advances_main() {
     sync_task.abort();
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_push_pulls_back_round_tripped_merged_result() {
     let tempdir = TempDir::new().unwrap();
@@ -1367,7 +1353,6 @@ async fn sync_local_push_pulls_back_round_tripped_merged_result() {
     sync_task.abort();
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_identical_resave_does_not_create_server_commit() {
     let tempdir = TempDir::new().unwrap();
@@ -1411,7 +1396,6 @@ async fn sync_local_identical_resave_does_not_create_server_commit() {
     sync_task.abort();
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_reverting_to_old_local_state_after_remote_update_pushes_again() {
     let tempdir = TempDir::new().unwrap();
@@ -1473,7 +1457,6 @@ async fn sync_local_reverting_to_old_local_state_after_remote_update_pushes_agai
     sync_task.abort();
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_alice_push_eventually_updates_bobs_local_file() {
     let tempdir = TempDir::new().unwrap();
@@ -1522,7 +1505,6 @@ async fn sync_local_alice_push_eventually_updates_bobs_local_file() {
     bob_sync_task.abort();
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_bob_push_eventually_updates_alices_local_file() {
     let tempdir = TempDir::new().unwrap();
@@ -1568,7 +1550,6 @@ async fn sync_local_bob_push_eventually_updates_alices_local_file() {
     bob_sync_task.abort();
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_rapid_local_saves_are_debounced_into_single_put() {
     let tempdir = TempDir::new().unwrap();
@@ -1612,7 +1593,6 @@ async fn sync_local_rapid_local_saves_are_debounced_into_single_put() {
     sync_task.abort();
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_missing_local_file_on_push_event_does_not_crash() {
     let tempdir = TempDir::new().unwrap();
@@ -1674,7 +1654,6 @@ async fn sync_local_missing_local_file_on_push_event_does_not_crash() {
     sync_task.abort();
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_preexisting_local_file_is_pushed_on_first_start() {
     let tempdir = TempDir::new().unwrap();
@@ -1721,7 +1700,6 @@ async fn sync_local_preexisting_local_file_is_pushed_on_first_start() {
     sync_task.abort();
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_persists_pending_promote_state_before_promote_completes() {
     let tempdir = TempDir::new().unwrap();
@@ -1784,7 +1762,6 @@ async fn sync_local_persists_pending_promote_state_before_promote_completes() {
     let _ = sync_process.wait();
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_recovers_pending_promote_and_clears_state_file() {
     let tempdir = TempDir::new().unwrap();
@@ -1855,7 +1832,6 @@ async fn sync_local_recovers_pending_promote_and_clears_state_file() {
     assert!(entry_titles(&fetched).contains(&"Bob Entry".to_string()));
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_recovery_branch_conflict_is_fatal() {
     let tempdir = TempDir::new().unwrap();
@@ -1919,7 +1895,6 @@ async fn sync_local_recovery_branch_conflict_is_fatal() {
     assert!(message.contains("branch was modified unexpectedly"));
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_stale_pending_promote_reports_useful_error() {
     let tempdir = TempDir::new().unwrap();
@@ -1964,7 +1939,6 @@ async fn sync_local_stale_pending_promote_reports_useful_error() {
     );
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_warns_when_event_stream_rejects_credentials() {
     let tempdir = TempDir::new().unwrap();
@@ -2013,7 +1987,6 @@ async fn sync_local_warns_when_event_stream_rejects_credentials() {
     );
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_warns_when_merge_from_main_rejects_credentials() {
     let tempdir = TempDir::new().unwrap();
@@ -2078,7 +2051,6 @@ async fn sync_local_warns_when_merge_from_main_rejects_credentials() {
     );
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_endpoints_reject_cross_client_credentials() {
     let tempdir = TempDir::new().unwrap();
@@ -2111,7 +2083,6 @@ async fn sync_endpoints_reject_cross_client_credentials() {
     assert_eq!(merge.status(), StatusCode::UNAUTHORIZED);
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_once_exits_after_initial_reconcile_without_starting_sse() {
     let tempdir = TempDir::new().unwrap();
@@ -2158,7 +2129,6 @@ async fn sync_local_once_exits_after_initial_reconcile_without_starting_sse() {
     );
 }
 
-#[serial_test::serial]
 #[tokio::test]
 async fn sync_local_unknown_client_id_returns_clear_error() {
     let tempdir = TempDir::new().unwrap();

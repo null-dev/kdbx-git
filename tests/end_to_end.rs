@@ -1451,6 +1451,153 @@ async fn concurrent_puts_from_two_clients_are_serialized_in_main_history() {
     let titles = entry_titles(&main_branch);
     assert!(titles.contains(&"Alice Concurrent Entry".to_string()));
     assert!(titles.contains(&"Bob Concurrent Entry".to_string()));
+
+    let alice_get = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(alice_get.status(), StatusCode::OK);
+    let alice_titles = entry_titles(&parse_kdbx_bytes(
+        &alice_get.bytes().await.unwrap(),
+        &config.database,
+    ));
+    assert!(alice_titles.contains(&"Alice Concurrent Entry".to_string()));
+    assert!(alice_titles.contains(&"Bob Concurrent Entry".to_string()));
+
+    let bob_get_after = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(bob_get_after.status(), StatusCode::OK);
+    let bob_titles = entry_titles(&parse_kdbx_bytes(
+        &bob_get_after.bytes().await.unwrap(),
+        &config.database,
+    ));
+    assert!(bob_titles.contains(&"Alice Concurrent Entry".to_string()));
+    assert!(bob_titles.contains(&"Bob Concurrent Entry".to_string()));
+}
+
+#[tokio::test]
+async fn three_clients_writes_converge_for_all_clients() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let alice_db = sample_db("Shared DB", "Alice Entry");
+    let alice_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(alice_put.status().is_success());
+
+    let bob_get = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(bob_get.status(), StatusCode::OK);
+    let mut bob_db = parse_kdbx_bytes(&bob_get.bytes().await.unwrap(), &config.database);
+    add_entry(
+        &mut bob_db,
+        "00000000-0000-0000-0000-000000000030",
+        "Bob Entry",
+        "bob",
+        "bobpass",
+    );
+    let bob_put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(bob_put.status().is_success());
+
+    let carol_get = authed(
+        &client,
+        "carol-user",
+        "carol-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/carol/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(carol_get.status(), StatusCode::OK);
+    let mut carol_db = parse_kdbx_bytes(&carol_get.bytes().await.unwrap(), &config.database);
+    add_entry(
+        &mut carol_db,
+        "00000000-0000-0000-0000-000000000031",
+        "Carol Entry",
+        "carol",
+        "carolpass",
+    );
+    let carol_put = authed(
+        &client,
+        "carol-user",
+        "carol-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/carol/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&carol_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(carol_put.status().is_success());
+
+    for (client_id, username, password) in [
+        ("alice", "alice-user", "alice-pass"),
+        ("bob", "bob-user", "bob-pass"),
+        ("carol", "carol-user", "carol-pass"),
+    ] {
+        let get = authed(
+            &client,
+            username,
+            password,
+            reqwest::Method::GET,
+            &format!("{}/dav/{client_id}/database.kdbx", server.base_url),
+        )
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(get.status(), StatusCode::OK);
+        let titles = entry_titles(&parse_kdbx_bytes(
+            &get.bytes().await.unwrap(),
+            &config.database,
+        ));
+        assert!(titles.contains(&"Alice Entry".to_string()));
+        assert!(titles.contains(&"Bob Entry".to_string()));
+        assert!(titles.contains(&"Carol Entry".to_string()));
+    }
 }
 
 #[tokio::test]
@@ -2664,4 +2811,176 @@ async fn sync_events_stream_sends_ready_immediately() {
     assert_eq!(ready.1, "0");
 
     sse_handle.abort();
+}
+
+#[tokio::test]
+async fn get_after_sync_promote_still_returns_correct_merged_content() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let alice_db = sample_db("Shared DB", "Alice Entry");
+    let alice_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(alice_put.status().is_success());
+
+    let bob_get = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(bob_get.status(), StatusCode::OK);
+    let mut bob_db = parse_kdbx_bytes(&bob_get.bytes().await.unwrap(), &config.database);
+    add_entry(
+        &mut bob_db,
+        "00000000-0000-0000-0000-000000000040",
+        "Bob Entry",
+        "bob",
+        "bobpass",
+    );
+    let bob_put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(bob_put.status().is_success());
+
+    let merge = post_sync_merge_from_main_ok(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+    )
+    .await;
+    let promote = post_sync_promote_merge(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+        &merge.commit_id,
+        &merge.expected_tip,
+    )
+    .await;
+    assert_eq!(promote.status(), StatusCode::OK);
+
+    let alice_get = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(alice_get.status(), StatusCode::OK);
+    let titles = entry_titles(&parse_kdbx_bytes(
+        &alice_get.bytes().await.unwrap(),
+        &config.database,
+    ));
+    assert!(titles.contains(&"Alice Entry".to_string()));
+    assert!(titles.contains(&"Bob Entry".to_string()));
+}
+
+#[tokio::test]
+async fn sync_merge_from_main_catches_up_branch_far_behind_main_in_one_call() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+
+    let alice_db = sample_db("Shared DB", "Alice Entry");
+    let alice_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(alice_put.status().is_success());
+
+    let alice_tip_before = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+
+    let bob_get = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(bob_get.status(), StatusCode::OK);
+    let mut bob_db = parse_kdbx_bytes(&bob_get.bytes().await.unwrap(), &config.database);
+
+    for idx in 0..5 {
+        add_entry(
+            &mut bob_db,
+            &format!("00000000-0000-0000-0000-00000000005{idx}"),
+            &format!("Bob Entry {idx}"),
+            "bob",
+            &format!("bobpass-{idx}"),
+        );
+        let bob_put = authed(
+            &client,
+            "bob-user",
+            "bob-pass",
+            reqwest::Method::PUT,
+            &format!("{}/dav/bob/database.kdbx", server.base_url),
+        )
+        .body(build_kdbx_bytes(&bob_db, &config.database))
+        .send()
+        .await
+        .unwrap();
+        assert!(bob_put.status().is_success());
+    }
+
+    let merge = post_sync_merge_from_main_ok(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+    )
+    .await;
+    assert_eq!(merge.expected_tip, alice_tip_before.to_hex().to_string());
+
+    let parsed = parse_kdbx_bytes(&merge.body, &config.database);
+    let titles = entry_titles(&parsed);
+    assert!(titles.contains(&"Alice Entry".to_string()));
+    for idx in 0..5 {
+        assert!(
+            titles.contains(&format!("Bob Entry {idx}")),
+            "missing far-behind update Bob Entry {idx}: {titles:?}"
+        );
+    }
 }

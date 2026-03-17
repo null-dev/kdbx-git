@@ -114,9 +114,9 @@ Tests marked ✅ are already implemented. All others need to be written.
 
 ## Multi-client / concurrency scenarios
 
-- [ ] Three clients (alice, bob, carol): each writes a distinct entry; after all three writes, each client's GET returns all three entries
-- [ ] Alice and bob write at the same time (goroutine/task race): server serialises both writes; after both finish, each client's GET sees both entries
-- [ ] alice's sync-local is running while bob makes changes via WebDAV: alice's local file converges to include bob's entries within the timeout
-- [ ] alice's sync-local is running while bob is also running sync-local: bob modifies his local file; alice's local file eventually receives bob's entries
-- [ ] Client writes to branch, branch is subsequently promoted by sync-local to a merge commit: client's next GET still returns correct merged content
-- [ ] Client with a branch far behind main (many commits behind) catches up in a single merge-from-main call
+- ✅ Three clients (alice, bob, carol): each writes a distinct entry; after all three writes, each client's GET returns all three entries
+- ✅ Alice and bob write at the same time (goroutine/task race): server serialises both writes; after both finish, each client's GET sees both entries
+- ✅ alice's sync-local is running while bob makes changes via WebDAV: alice's local file converges to include bob's entries within the timeout
+- ✅ alice's sync-local is running while bob is also running sync-local: bob modifies his local file; alice's local file eventually receives bob's entries
+- ✅ Client writes to branch, branch is subsequently promoted by sync-local to a merge commit: client's next GET still returns correct merged content
+- ✅ Client with a branch far behind main (many commits behind) catches up in a single merge-from-main call

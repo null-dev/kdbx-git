@@ -78,6 +78,11 @@ pub fn test_config(root: &Path, source_path: Option<PathBuf>) -> Config {
                 username: "bob-user".into(),
                 password: "bob-pass".into(),
             },
+            ClientConfig {
+                id: "carol".into(),
+                username: "carol-user".into(),
+                password: "carol-pass".into(),
+            },
         ],
     }
 }

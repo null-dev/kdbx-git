@@ -226,6 +226,9 @@ struct RemoteSyncer {
     /// Hash of the last bytes we wrote to the local file, used to suppress
     /// watcher events caused by our own writes.
     last_written_hash: Option<u64>,
+    /// Hash of the last bytes we successfully pushed to the server, used to
+    /// suppress repeated local save events that do not change content.
+    last_pushed_hash: Option<u64>,
 }
 
 impl RemoteSyncer {
@@ -243,6 +246,7 @@ impl RemoteSyncer {
             state_path,
             options,
             last_written_hash: None,
+            last_pushed_hash: None,
         }
     }
 
@@ -384,6 +388,12 @@ impl RemoteSyncer {
             return Ok(());
         }
 
+        // If the local bytes are unchanged since the last successful push,
+        // skip re-uploading them even if the editor emitted another save event.
+        if Some(hash) == self.last_pushed_hash {
+            return Ok(());
+        }
+
         info!(
             "sync-local '{}': pushing local change to server",
             self.options.client_id
@@ -399,7 +409,10 @@ impl RemoteSyncer {
             .wrap_err("failed to push local KDBX to server")?;
 
         match response.status() {
-            s if s.is_success() => Ok(()),
+            s if s.is_success() => {
+                self.last_pushed_hash = Some(hash);
+                Ok(())
+            }
             StatusCode::UNAUTHORIZED => bail!("server rejected sync-local credentials"),
             s => bail!("unexpected PUT status from server: {s}"),
         }

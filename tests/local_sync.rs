@@ -1373,11 +1373,12 @@ async fn sync_local_identical_resave_does_not_create_server_commit() {
     let tempdir = TempDir::new().unwrap();
     let config = test_config(tempdir.path(), None);
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let proxy = ProxyServer::start(server.base_url.clone(), false).await;
     let local_path = server.temp_root().join("alice-local.kdbx");
     let store = GitStore::open_or_init(&config.git_store).unwrap();
 
     let (sync_task, ready_rx) =
-        spawn_sync(config.clone(), local_path.clone(), server.base_url.clone());
+        spawn_sync(config.clone(), local_path.clone(), proxy.base_url.clone());
     ready_rx.await.unwrap();
 
     let alice_bytes =
@@ -1401,6 +1402,11 @@ async fn sync_local_identical_resave_does_not_create_server_commit() {
 
     assert_eq!(alice_tip_after, alice_tip_before);
     assert_eq!(main_tip_after, main_tip_before);
+    assert_eq!(
+        proxy.alice_put_count(),
+        1,
+        "identical resaves should not trigger a second PUT"
+    );
 
     sync_task.abort();
 }
@@ -1444,6 +1450,52 @@ async fn sync_local_alice_push_eventually_updates_bobs_local_file() {
             match tokio::fs::read(&bob_local_path).await {
                 Ok(bytes) => entry_titles(&parse_kdbx_bytes(&bytes, &database))
                     .contains(&"Alice Shared Entry".to_string()),
+                Err(_) => false,
+            }
+        }
+    })
+    .await;
+
+    alice_sync_task.abort();
+    bob_sync_task.abort();
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_bob_push_eventually_updates_alices_local_file() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let alice_local_path = server.temp_root().join("alice-local.kdbx");
+    let bob_local_path = server.temp_root().join("bob-local.kdbx");
+
+    let (alice_sync_task, alice_ready_rx) = spawn_sync_for(
+        "alice",
+        config.clone(),
+        alice_local_path.clone(),
+        server.base_url.clone(),
+    );
+    let (bob_sync_task, bob_ready_rx) = spawn_sync_for(
+        "bob",
+        config.clone(),
+        bob_local_path.clone(),
+        server.base_url.clone(),
+    );
+    alice_ready_rx.await.unwrap();
+    bob_ready_rx.await.unwrap();
+
+    let bob_db = sample_db("Two Clients DB", "Bob Shared Entry");
+    tokio::fs::write(&bob_local_path, build_kdbx_bytes(&bob_db, &config.database))
+        .await
+        .unwrap();
+
+    wait_for(|| {
+        let alice_local_path = alice_local_path.clone();
+        let database = config.database.clone();
+        async move {
+            match tokio::fs::read(&alice_local_path).await {
+                Ok(bytes) => entry_titles(&parse_kdbx_bytes(&bytes, &database))
+                    .contains(&"Bob Shared Entry".to_string()),
                 Err(_) => false,
             }
         }

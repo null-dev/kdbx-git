@@ -1,5 +1,5 @@
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{hash_map::DefaultHasher, VecDeque},
     hash::{Hash, Hasher},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
@@ -135,18 +135,60 @@ async fn run_sync_local(
         syncer.events_url(),
         syncer.client.username.clone(),
         syncer.client.password.clone(),
-        tx,
+        tx.clone(),
     ));
+
+    if fs::try_exists(&syncer.options.local_path)
+        .await
+        .wrap_err_with(|| {
+            format!(
+                "failed to stat local KDBX file {}",
+                syncer.options.local_path.display()
+            )
+        })?
+    {
+        let _ = tx.send(SyncTrigger::LocalFileChanged);
+    }
 
     if let Some(ready) = ready {
         let _ = ready.send(());
     }
 
-    while let Some(trigger) = rx.recv().await {
+    let mut pending_triggers = VecDeque::new();
+    loop {
+        let trigger = if let Some(trigger) = pending_triggers.pop_front() {
+            trigger
+        } else {
+            match rx.recv().await {
+                Some(trigger) => trigger,
+                None => break,
+            }
+        };
+
         match trigger {
             SyncTrigger::LocalFileChanged => {
-                // Let the writer finish flushing before we read the file.
-                sleep(Duration::from_millis(400)).await;
+                // Wait until the local file has been idle for 400ms, resetting
+                // the timer whenever a new local-file event arrives.
+                let debounce_until = tokio::time::Instant::now() + Duration::from_millis(400);
+                let debounce = sleep(Duration::from_millis(400));
+                tokio::pin!(debounce);
+                debounce.as_mut().reset(debounce_until);
+
+                loop {
+                    tokio::select! {
+                        _ = &mut debounce => break,
+                        received = rx.recv() => match received {
+                            Some(SyncTrigger::LocalFileChanged) => {
+                                debounce.as_mut().reset(
+                                    tokio::time::Instant::now() + Duration::from_millis(400)
+                                );
+                            }
+                            Some(other) => pending_triggers.push_back(other),
+                            None => break,
+                        }
+                    }
+                }
+
                 if let Err(e) = syncer.push_local_to_webdav().await {
                     warn!(
                         "sync-local '{}': push failed: {e:#}",

@@ -68,14 +68,14 @@ Tests marked ✅ are already implemented. All others need to be written.
 
 ## sync-local — Push (local file → server)
 
-- [ ] Modifying the local KDBX file causes sync-local to push it to the server via WebDAV PUT
-- [ ] After a local push, main is updated on the server (PUT triggers client → main merge)
-- [ ] After a local push, an SSE event fires, sync-local pulls the merged result back, and the local file is updated with the round-tripped content
-- [ ] Pushing the local file with identical content (e.g. re-saved without changes) does not result in a server commit (server-side no-op dedup)
-- [ ] Two sync-local instances (alice and bob): alice modifies her local file; bob's local file is eventually updated with alice's entry
-- [ ] Rapid local saves (many writes in quick succession) are debounced into a single push, not a flood of PUT requests
-- [ ] If the local file does not exist when a push would be triggered (e.g. deleted externally), sync-local does not error fatally
-- [ ] Pre-existing local file on first start (server has no content for this client): file is pushed to the server
+- ✅ Modifying the local KDBX file causes sync-local to push it to the server via WebDAV PUT
+- ✅ After a local push, main is updated on the server (PUT triggers client → main merge)
+- ✅ After a local push, an SSE event fires, sync-local pulls the merged result back, and the local file is updated with the round-tripped content
+- ✅ Pushing the local file with identical content (e.g. re-saved without changes) does not result in a server commit (server-side no-op dedup)
+- ✅ Two sync-local instances (alice and bob): alice modifies her local file; bob's local file is eventually updated with alice's entry
+- ✅ Rapid local saves (many writes in quick succession) are debounced into a single push, not a flood of PUT requests
+- ✅ If the local file does not exist when a push would be triggered (e.g. deleted externally), sync-local does not error fatally
+- ✅ Pre-existing local file on first start (server has no content for this client): file is pushed to the server
 
 ## sync-local — Interrupt recovery
 

@@ -101,12 +101,22 @@ fn spawn_sync(
     local_path: std::path::PathBuf,
     server_url: String,
 ) -> (JoinHandle<()>, oneshot::Receiver<()>) {
+    spawn_sync_for("alice", config, local_path, server_url)
+}
+
+fn spawn_sync_for(
+    client_id: &str,
+    config: kdbx_git::config::Config,
+    local_path: std::path::PathBuf,
+    server_url: String,
+) -> (JoinHandle<()>, oneshot::Receiver<()>) {
+    let client_id = client_id.to_string();
     let (ready_tx, ready_rx) = oneshot::channel();
     let handle = tokio::spawn(async move {
         kdbx_git::sync::sync_local_with_ready(
             config,
             SyncLocalOptions {
-                client_id: "alice".into(),
+                client_id,
                 local_path,
                 once: false,
                 poll: false,
@@ -1033,4 +1043,407 @@ async fn sync_local_reconnects_sse_and_receives_later_updates() {
 
     sync_task.abort();
     assert!(proxy.event_connections() >= 2);
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_local_edits_are_uploaded_via_webdav_put() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let proxy = ProxyServer::start(server.base_url.clone(), false).await;
+    let client = Client::new();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+
+    let (sync_task, ready_rx) =
+        spawn_sync(config.clone(), local_path.clone(), proxy.base_url.clone());
+    ready_rx.await.unwrap();
+
+    let alice_db = sample_db("Local Push DB", "Alice Local Entry");
+    tokio::fs::write(&local_path, build_kdbx_bytes(&alice_db, &config.database))
+        .await
+        .unwrap();
+
+    wait_for(|| {
+        let proxy = &proxy;
+        async move { proxy.alice_put_count() >= 1 }
+    })
+    .await;
+
+    wait_for(|| {
+        let client = client.clone();
+        let base_url = server.base_url.clone();
+        let database = config.database.clone();
+        async move {
+            match authed(
+                &client,
+                "alice-user",
+                "alice-pass",
+                reqwest::Method::GET,
+                &format!("{}/dav/alice/database.kdbx", base_url),
+            )
+            .send()
+            .await
+            {
+                Ok(response) if response.status() == StatusCode::OK => {
+                    let bytes = response.bytes().await.unwrap();
+                    entry_titles(&parse_kdbx_bytes(&bytes, &database))
+                        .contains(&"Alice Local Entry".to_string())
+                }
+                _ => false,
+            }
+        }
+    })
+    .await;
+
+    sync_task.abort();
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_local_push_advances_main() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+
+    let (sync_task, ready_rx) =
+        spawn_sync(config.clone(), local_path.clone(), server.base_url.clone());
+    ready_rx.await.unwrap();
+
+    let alice_db = sample_db("Local Push DB", "Alice Main Entry");
+    tokio::fs::write(&local_path, build_kdbx_bytes(&alice_db, &config.database))
+        .await
+        .unwrap();
+
+    wait_for(|| {
+        let store = &store;
+        async move {
+            match store.read_branch("main".into()).await.unwrap() {
+                Some(db) => entry_titles(&db).contains(&"Alice Main Entry".to_string()),
+                None => false,
+            }
+        }
+    })
+    .await;
+
+    sync_task.abort();
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_push_pulls_back_round_tripped_merged_result() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+
+    let bob_db = sample_db("Shared DB", "Bob Entry");
+    let bob_put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(bob_put.status().is_success());
+
+    let (sync_task, ready_rx) =
+        spawn_sync(config.clone(), local_path.clone(), server.base_url.clone());
+    ready_rx.await.unwrap();
+
+    wait_for(|| {
+        let local_path = local_path.clone();
+        let database = config.database.clone();
+        async move {
+            match tokio::fs::read(&local_path).await {
+                Ok(bytes) => entry_titles(&parse_kdbx_bytes(&bytes, &database))
+                    .contains(&"Bob Entry".to_string()),
+                Err(_) => false,
+            }
+        }
+    })
+    .await;
+
+    let mut alice_local = parse_kdbx_bytes(
+        &tokio::fs::read(&local_path).await.unwrap(),
+        &config.database,
+    );
+    add_entry(
+        &mut alice_local,
+        "00000000-0000-0000-0000-000000000028",
+        "Alice Local Entry",
+        "alice",
+        "alicepass",
+    );
+    tokio::fs::write(
+        &local_path,
+        build_kdbx_bytes(&alice_local, &config.database),
+    )
+    .await
+    .unwrap();
+
+    wait_for(|| {
+        let local_path = local_path.clone();
+        let database = config.database.clone();
+        async move {
+            match tokio::fs::read(&local_path).await {
+                Ok(bytes) => {
+                    let titles = entry_titles(&parse_kdbx_bytes(&bytes, &database));
+                    titles.contains(&"Bob Entry".to_string())
+                        && titles.contains(&"Alice Local Entry".to_string())
+                }
+                Err(_) => false,
+            }
+        }
+    })
+    .await;
+
+    sync_task.abort();
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_identical_resave_does_not_create_server_commit() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+
+    let (sync_task, ready_rx) =
+        spawn_sync(config.clone(), local_path.clone(), server.base_url.clone());
+    ready_rx.await.unwrap();
+
+    let alice_bytes =
+        build_kdbx_bytes(&sample_db("Local Push DB", "Alice Entry"), &config.database);
+    tokio::fs::write(&local_path, &alice_bytes).await.unwrap();
+
+    wait_for(|| {
+        let store = &store;
+        async move { store.branch_tip_id("alice".into()).await.unwrap().is_some() }
+    })
+    .await;
+
+    let alice_tip_before = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    let main_tip_before = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+
+    tokio::fs::write(&local_path, &alice_bytes).await.unwrap();
+    sleep(Duration::from_millis(1200)).await;
+
+    let alice_tip_after = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    let main_tip_after = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+
+    assert_eq!(alice_tip_after, alice_tip_before);
+    assert_eq!(main_tip_after, main_tip_before);
+
+    sync_task.abort();
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_alice_push_eventually_updates_bobs_local_file() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let alice_local_path = server.temp_root().join("alice-local.kdbx");
+    let bob_local_path = server.temp_root().join("bob-local.kdbx");
+
+    let (alice_sync_task, alice_ready_rx) = spawn_sync_for(
+        "alice",
+        config.clone(),
+        alice_local_path.clone(),
+        server.base_url.clone(),
+    );
+    let (bob_sync_task, bob_ready_rx) = spawn_sync_for(
+        "bob",
+        config.clone(),
+        bob_local_path.clone(),
+        server.base_url.clone(),
+    );
+    alice_ready_rx.await.unwrap();
+    bob_ready_rx.await.unwrap();
+
+    let alice_db = sample_db("Two Clients DB", "Alice Shared Entry");
+    tokio::fs::write(
+        &alice_local_path,
+        build_kdbx_bytes(&alice_db, &config.database),
+    )
+    .await
+    .unwrap();
+
+    wait_for(|| {
+        let bob_local_path = bob_local_path.clone();
+        let database = config.database.clone();
+        async move {
+            match tokio::fs::read(&bob_local_path).await {
+                Ok(bytes) => entry_titles(&parse_kdbx_bytes(&bytes, &database))
+                    .contains(&"Alice Shared Entry".to_string()),
+                Err(_) => false,
+            }
+        }
+    })
+    .await;
+
+    alice_sync_task.abort();
+    bob_sync_task.abort();
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_rapid_local_saves_are_debounced_into_single_put() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let proxy = ProxyServer::start(server.base_url.clone(), false).await;
+    let local_path = server.temp_root().join("alice-local.kdbx");
+
+    let (sync_task, ready_rx) =
+        spawn_sync(config.clone(), local_path.clone(), proxy.base_url.clone());
+    ready_rx.await.unwrap();
+
+    for idx in 0..3 {
+        let mut db = sample_db("Debounce DB", &format!("Alice Save {idx}"));
+        add_entry(
+            &mut db,
+            &format!("00000000-0000-0000-0000-00000000003{idx}"),
+            &format!("Extra {idx}"),
+            "alice",
+            "alicepass",
+        );
+        tokio::fs::write(&local_path, build_kdbx_bytes(&db, &config.database))
+            .await
+            .unwrap();
+        sleep(Duration::from_millis(100)).await;
+    }
+
+    wait_for(|| {
+        let proxy = &proxy;
+        async move { proxy.alice_put_count() >= 1 }
+    })
+    .await;
+    sleep(Duration::from_millis(1200)).await;
+
+    assert_eq!(
+        proxy.alice_put_count(),
+        1,
+        "rapid local saves should coalesce into one PUT"
+    );
+
+    sync_task.abort();
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_missing_local_file_on_push_event_does_not_crash() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+
+    let initial_db = sample_db("Missing File DB", "Initial Entry");
+    tokio::fs::write(&local_path, build_kdbx_bytes(&initial_db, &config.database))
+        .await
+        .unwrap();
+
+    let (sync_task, ready_rx) =
+        spawn_sync(config.clone(), local_path.clone(), server.base_url.clone());
+    ready_rx.await.unwrap();
+
+    tokio::fs::remove_file(&local_path).await.unwrap();
+    sleep(Duration::from_millis(800)).await;
+    assert!(
+        !sync_task.is_finished(),
+        "sync-local should ignore missing local file during push"
+    );
+
+    let replacement_db = sample_db("Missing File DB", "Replacement Entry");
+    tokio::fs::write(
+        &local_path,
+        build_kdbx_bytes(&replacement_db, &config.database),
+    )
+    .await
+    .unwrap();
+
+    wait_for(|| {
+        let client = client.clone();
+        let base_url = server.base_url.clone();
+        let database = config.database.clone();
+        async move {
+            match authed(
+                &client,
+                "alice-user",
+                "alice-pass",
+                reqwest::Method::GET,
+                &format!("{}/dav/alice/database.kdbx", base_url),
+            )
+            .send()
+            .await
+            {
+                Ok(response) if response.status() == StatusCode::OK => {
+                    let bytes = response.bytes().await.unwrap();
+                    entry_titles(&parse_kdbx_bytes(&bytes, &database))
+                        .contains(&"Replacement Entry".to_string())
+                }
+                _ => false,
+            }
+        }
+    })
+    .await;
+
+    sync_task.abort();
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_preexisting_local_file_is_pushed_on_first_start() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+
+    let local_db = sample_db("Startup Push DB", "Preexisting Local Entry");
+    tokio::fs::write(&local_path, build_kdbx_bytes(&local_db, &config.database))
+        .await
+        .unwrap();
+
+    let (sync_task, ready_rx) =
+        spawn_sync(config.clone(), local_path.clone(), server.base_url.clone());
+    ready_rx.await.unwrap();
+
+    wait_for(|| {
+        let client = client.clone();
+        let base_url = server.base_url.clone();
+        let database = config.database.clone();
+        async move {
+            match authed(
+                &client,
+                "alice-user",
+                "alice-pass",
+                reqwest::Method::GET,
+                &format!("{}/dav/alice/database.kdbx", base_url),
+            )
+            .send()
+            .await
+            {
+                Ok(response) if response.status() == StatusCode::OK => {
+                    let bytes = response.bytes().await.unwrap();
+                    entry_titles(&parse_kdbx_bytes(&bytes, &database))
+                        .contains(&"Preexisting Local Entry".to_string())
+                }
+                _ => false,
+            }
+        }
+    })
+    .await;
+
+    sync_task.abort();
 }

@@ -79,11 +79,11 @@ Tests marked ✅ are already implemented. All others need to be written.
 
 ## sync-local — Interrupt recovery
 
-- [ ] If the process exits after the local file is written but before promote completes, the state file (`*.sync-state.json`) contains the pending promote
-- [ ] On the next startup, the pending promote is retried and completes successfully
-- [ ] After recovering a pending promote, the state file is cleared
-- [ ] If the pending promote fails with 409 on recovery (branch was modified externally), sync-local exits with a fatal error
-- [ ] State file from a previous run with a stale commit ID (commit no longer accessible) produces a useful error, not a panic
+- ✅ If the process exits after the local file is written but before promote completes, the state file (`*.sync-state.json`) contains the pending promote
+- ✅ On the next startup, the pending promote is retried and completes successfully
+- ✅ After recovering a pending promote, the state file is cleared
+- ✅ If the pending promote fails with 409 on recovery (branch was modified externally), sync-local exits with a fatal error
+- ✅ State file from a previous run with a stale commit ID (commit no longer accessible) produces a useful error, not a panic
 
 ## sync-local — Auth & error handling
 

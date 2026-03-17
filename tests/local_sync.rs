@@ -20,13 +20,15 @@ use axum::{
     Router,
 };
 use common::{
-    add_entry, build_kdbx_bytes, entry_titles, parse_kdbx_bytes, sample_db, test_config, TestServer,
+    add_entry, build_kdbx_bytes, entry_titles, parse_kdbx_bytes, sample_db, test_config,
+    write_config, TestServer,
 };
 use kdbx_git::{
     store::GitStore,
     sync::{sync_local, SyncLocalOptions},
 };
 use reqwest::{Client, StatusCode};
+use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 use tokio::{
     net::TcpListener,
@@ -137,6 +139,7 @@ struct ProxyState {
     alice_put_count: Arc<AtomicUsize>,
     event_connections: Arc<AtomicUsize>,
     drop_first_events: Arc<AtomicBool>,
+    alice_promote_status: Option<HttpStatusCode>,
 }
 
 struct ProxyServer {
@@ -148,6 +151,14 @@ struct ProxyServer {
 
 impl ProxyServer {
     async fn start(target_base_url: String, drop_first_events: bool) -> Self {
+        Self::start_with_options(target_base_url, drop_first_events, None).await
+    }
+
+    async fn start_with_options(
+        target_base_url: String,
+        drop_first_events: bool,
+        alice_promote_status: Option<HttpStatusCode>,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
 
@@ -157,6 +168,7 @@ impl ProxyServer {
             alice_put_count: Arc::new(AtomicUsize::new(0)),
             event_connections: Arc::new(AtomicUsize::new(0)),
             drop_first_events: Arc::new(AtomicBool::new(drop_first_events)),
+            alice_promote_status,
         };
 
         let app = Router::new()
@@ -214,6 +226,16 @@ async fn proxy_handler(State(state): State<ProxyState>, req: Request<Body>) -> i
         state.alice_put_count.fetch_add(1, Ordering::SeqCst);
     }
 
+    if req.method() == reqwest::Method::POST
+        && path.starts_with("/sync/alice/promote-merge/")
+        && state.alice_promote_status.is_some()
+    {
+        return Response::builder()
+            .status(state.alice_promote_status.unwrap())
+            .body(Body::empty())
+            .unwrap();
+    }
+
     let target_url = format!("{}{}", state.target_base_url, path_and_query);
     let (parts, body) = req.into_parts();
     let body = to_bytes(body, usize::MAX).await.unwrap();
@@ -243,6 +265,78 @@ async fn proxy_handler(State(state): State<ProxyState>, req: Request<Body>) -> i
         builder = builder.header(name, value);
     }
     builder.body(Body::from_stream(stream)).unwrap()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct TestSyncState {
+    pending_promote: Option<TestPendingPromote>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct TestPendingPromote {
+    commit_id: String,
+    expected_branch_tip: Option<String>,
+}
+
+fn sync_state_path(local_path: &Path) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("{}.sync-state.json", local_path.display()))
+}
+
+async fn load_sync_state(local_path: &Path) -> TestSyncState {
+    let text = tokio::fs::read_to_string(sync_state_path(local_path))
+        .await
+        .unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+async fn write_sync_state(local_path: &Path, state: &TestSyncState) {
+    tokio::fs::write(
+        sync_state_path(local_path),
+        serde_json::to_vec(state).unwrap(),
+    )
+    .await
+    .unwrap();
+}
+
+async fn request_pending_promote(client: &Client, base_url: &str) -> (Vec<u8>, TestPendingPromote) {
+    let response = authed(
+        client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::POST,
+        &format!("{}/sync/alice/merge-from-main", base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let commit_id = response
+        .headers()
+        .get("X-Merge-Commit-Id")
+        .and_then(|value| value.to_str().ok())
+        .unwrap()
+        .to_string();
+    let expected_tip = response
+        .headers()
+        .get("X-Expected-Branch-Tip")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            if value == "none" {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        });
+    let bytes = response.bytes().await.unwrap().to_vec();
+
+    (
+        bytes,
+        TestPendingPromote {
+            commit_id,
+            expected_branch_tip: expected_tip,
+        },
+    )
 }
 
 /// When alice's branch doesn't exist but main has content, sync-local --once
@@ -411,6 +505,7 @@ async fn sync_local_updates_local_file_when_main_advances() {
     .await;
 
     sync_task.abort();
+    let _ = sync_task.await;
 }
 
 #[serial_test::serial]
@@ -935,9 +1030,8 @@ async fn sync_local_pull_does_not_immediately_push_file_back_to_server() {
     .unwrap();
     assert!(put.status().is_success());
 
-    let (sync_task, ready_rx) =
+    let (sync_task, _ready_rx) =
         spawn_sync(config.clone(), local_path.clone(), proxy.base_url.clone());
-    ready_rx.await.unwrap();
 
     wait_for(|| {
         let local_path = local_path.clone();
@@ -1446,4 +1540,245 @@ async fn sync_local_preexisting_local_file_is_pushed_on_first_start() {
     .await;
 
     sync_task.abort();
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_persists_pending_promote_state_before_promote_completes() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let proxy = ProxyServer::start_with_options(
+        server.base_url.clone(),
+        false,
+        Some(HttpStatusCode::INTERNAL_SERVER_ERROR),
+    )
+    .await;
+    let client = Client::new();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+    let config_path = server.temp_root().join("config.toml");
+    write_config(&config_path, &config);
+
+    let bob_db = sample_db("Recovery DB", "Bob Entry");
+    let put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(put.status().is_success());
+
+    let mut sync_process = Command::new(env!("CARGO_BIN_EXE_kdbx-git"))
+        .args([
+            "sync-local",
+            "--server-url",
+            &proxy.base_url,
+            config_path.to_str().unwrap(),
+            "alice",
+            local_path.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    sleep(Duration::from_millis(750)).await;
+
+    let state = load_sync_state(&local_path).await;
+    let pending = state
+        .pending_promote
+        .expect("pending promote should be persisted");
+    assert!(!pending.commit_id.is_empty());
+
+    let local_bytes = tokio::fs::read(&local_path).await.unwrap();
+    let local_db = parse_kdbx_bytes(&local_bytes, &config.database);
+    assert!(entry_titles(&local_db).contains(&"Bob Entry".to_string()));
+
+    let _ = sync_process.kill();
+    let _ = sync_process.wait();
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_recovers_pending_promote_and_clears_state_file() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+
+    let bob_db = sample_db("Recovery DB", "Bob Entry");
+    let put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(put.status().is_success());
+
+    let (bytes, pending) = request_pending_promote(&client, &server.base_url).await;
+    tokio::fs::write(&local_path, bytes).await.unwrap();
+    write_sync_state(
+        &local_path,
+        &TestSyncState {
+            pending_promote: Some(pending.clone()),
+        },
+    )
+    .await;
+
+    sync_local(
+        config.clone(),
+        SyncLocalOptions {
+            client_id: "alice".into(),
+            local_path: local_path.clone(),
+            once: true,
+            poll: false,
+            server_url: Some(server.base_url.clone()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let alice_tip = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    assert_eq!(alice_tip.to_hex().to_string(), pending.commit_id);
+
+    let state = load_sync_state(&local_path).await;
+    assert!(
+        state.pending_promote.is_none(),
+        "state file should be cleared"
+    );
+
+    let get = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(get.status(), StatusCode::OK);
+    let fetched = parse_kdbx_bytes(&get.bytes().await.unwrap(), &config.database);
+    assert!(entry_titles(&fetched).contains(&"Bob Entry".to_string()));
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_recovery_branch_conflict_is_fatal() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+
+    let bob_db = sample_db("Recovery DB", "Bob Entry");
+    let put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(put.status().is_success());
+
+    let (bytes, pending) = request_pending_promote(&client, &server.base_url).await;
+    tokio::fs::write(&local_path, bytes).await.unwrap();
+    write_sync_state(
+        &local_path,
+        &TestSyncState {
+            pending_promote: Some(pending),
+        },
+    )
+    .await;
+
+    let alice_db = sample_db("Conflict DB", "Alice Branch Entry");
+    let alice_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(alice_put.status().is_success());
+
+    let err = sync_local(
+        config.clone(),
+        SyncLocalOptions {
+            client_id: "alice".into(),
+            local_path: local_path.clone(),
+            once: true,
+            poll: false,
+            server_url: Some(server.base_url.clone()),
+        },
+    )
+    .await
+    .expect_err("recovery should fail fatally on branch conflict");
+    let message = format!("{err:#}");
+    assert!(message.contains("failed to recover pending promote"));
+    assert!(message.contains("branch was modified unexpectedly"));
+}
+
+#[serial_test::serial]
+#[tokio::test]
+async fn sync_local_stale_pending_promote_reports_useful_error() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+
+    let stale_pending = TestPendingPromote {
+        commit_id: "1111111111111111111111111111111111111111".into(),
+        expected_branch_tip: None,
+    };
+    write_sync_state(
+        &local_path,
+        &TestSyncState {
+            pending_promote: Some(stale_pending.clone()),
+        },
+    )
+    .await;
+
+    let err = sync_local(
+        config.clone(),
+        SyncLocalOptions {
+            client_id: "alice".into(),
+            local_path: local_path.clone(),
+            once: true,
+            poll: false,
+            server_url: Some(server.base_url.clone()),
+        },
+    )
+    .await
+    .expect_err("stale pending promote should fail with a useful error");
+    let message = format!("{err:#}");
+    assert!(message.contains("failed to recover pending promote"));
+    assert!(
+        message.contains(&stale_pending.commit_id),
+        "error should reference stale commit id: {message}"
+    );
+    assert!(
+        message.contains("unexpected status from promote-merge")
+            || message.contains("500 Internal Server Error"),
+        "error should explain the recovery failure: {message}"
+    );
 }

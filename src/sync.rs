@@ -309,8 +309,7 @@ impl RemoteSyncer {
                 "sync-local '{}': resuming interrupted promote {}",
                 self.options.client_id, pending.commit_id
             );
-            self.do_promote(&pending.commit_id, pending.expected_branch_tip.as_deref())
-                .await?;
+            self.resume_pending_promote(&pending).await?;
             self.save_state(&SyncState {
                 pending_promote: None,
             })
@@ -477,6 +476,19 @@ impl RemoteSyncer {
                 }
             }
         }
+    }
+
+    /// Resume a persisted pending promote from the state file.
+    ///
+    /// Unlike normal promote retries, recovery failures are surfaced
+    /// immediately so a stale or inconsistent state file produces a useful
+    /// startup error instead of retrying forever.
+    async fn resume_pending_promote(&self, pending: &PendingPromote) -> Result<()> {
+        let tip_param = pending.expected_branch_tip.as_deref().unwrap_or("none");
+        let url = self.promote_merge_url(&pending.commit_id, tip_param);
+        self.attempt_promote(&url)
+            .await
+            .wrap_err_with(|| format!("failed to recover pending promote {}", pending.commit_id))
     }
 
     async fn attempt_promote(&self, url: &str) -> Result<()> {

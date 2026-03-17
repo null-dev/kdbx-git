@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use color_eyre::eyre::{bail, Result};
+use clap::{Parser, Subcommand};
+use color_eyre::eyre::Result;
 use tracing::info;
 
 pub mod config;
@@ -15,8 +16,18 @@ pub enum CliCommand {
     Init { config_path: PathBuf },
 }
 
-fn usage() -> &'static str {
-    "usage: kdbx-git [config.toml]\n       kdbx-git --init [config.toml]"
+#[derive(Debug, Parser)]
+#[command(name = "kdbx-git", disable_help_subcommand = true)]
+struct RawCli {
+    #[arg(long, global = true, default_value = "config.toml")]
+    config: PathBuf,
+    #[command(subcommand)]
+    command: Option<RawCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+enum RawCommand {
+    Init,
 }
 
 pub fn init_observability() -> Result<()> {
@@ -36,34 +47,15 @@ pub fn parse_cli_args<I>(args: I) -> Result<CliCommand>
 where
     I: IntoIterator<Item = String>,
 {
-    let mut args: Vec<String> = args.into_iter().collect();
-    if !args.is_empty() {
-        args.remove(0);
-    }
+    let raw = RawCli::try_parse_from(args)?;
 
-    match args.first().map(String::as_str) {
+    match raw.command {
         None => Ok(CliCommand::Serve {
-            config_path: PathBuf::from("config.toml"),
+            config_path: raw.config,
         }),
-        Some("--init" | "init") => match args.get(1..) {
-            Some([]) => Ok(CliCommand::Init {
-                config_path: PathBuf::from("config.toml"),
-            }),
-            Some([config_path]) => Ok(CliCommand::Init {
-                config_path: PathBuf::from(config_path),
-            }),
-            _ => bail!(usage()),
-        },
-        Some("sync-local" | "--sync-local") => {
-            bail!("sync-local moved to the dedicated `kdbx-git-sync-local` binary")
-        }
-        Some("--help" | "-h") if args.len() == 1 => {
-            bail!(usage());
-        }
-        Some(config_path) if args.len() == 1 => Ok(CliCommand::Serve {
-            config_path: PathBuf::from(config_path),
+        Some(RawCommand::Init) => Ok(CliCommand::Init {
+            config_path: raw.config,
         }),
-        _ => bail!(usage()),
     }
 }
 
@@ -106,18 +98,16 @@ mod tests {
     #[test]
     fn parses_explicit_init_command() {
         assert_eq!(
-            parse_cli_args(["kdbx-git".into(), "--init".into(), "custom.toml".into()]).unwrap(),
+            parse_cli_args([
+                "kdbx-git".into(),
+                "init".into(),
+                "--config".into(),
+                "custom.toml".into()
+            ])
+            .unwrap(),
             CliCommand::Init {
                 config_path: PathBuf::from("custom.toml"),
             }
         );
-    }
-
-    #[test]
-    fn sync_local_command_points_to_new_binary() {
-        let err = parse_cli_args(["kdbx-git".into(), "sync-local".into()])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("kdbx-git-sync-local"));
     }
 }

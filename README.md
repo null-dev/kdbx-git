@@ -60,19 +60,19 @@ password = "correct horse battery staple"
 Import an existing KDBX file into the git store:
 
 ```bash
-cargo run -p kdbx-git -- --init config.toml
+cargo run -p kdbx-git -- init --config config.toml
 ```
 
 Start the server:
 
 ```bash
-cargo run -p kdbx-git -- config.toml
+cargo run -p kdbx-git -- --config config.toml
 ```
 
 Keep a local file in sync with a client branch through the running server:
 
 ```bash
-cargo run -p kdbx-git-sync-local -- client.toml ./laptop.kdbx
+cargo run -p kdbx-git-sync-local -- --config client.toml ./laptop.kdbx
 ```
 
 Useful options:
@@ -84,7 +84,7 @@ Examples:
 
 ```bash
 # Pull or push once, then exit
-cargo run -p kdbx-git-sync-local -- --once client.toml ./laptop.kdbx
+cargo run -p kdbx-git-sync-local -- --config client.toml --once ./laptop.kdbx
 ```
 
 ## KeePass Client Setup
@@ -114,11 +114,11 @@ Build and run:
 
 ```bash
 docker build -t kdbx-git .
-docker run --rm -p 8080:8080 -v "$PWD:/data" kdbx-git /data/config.toml
+docker run --rm -p 8080:8080 -v "$PWD:/data" kdbx-git --config /data/config.toml
 ```
 
 If you are bootstrapping a fresh store inside the container, run:
 
 ```bash
-docker run --rm -v "$PWD:/data" kdbx-git --init /data/config.toml
+docker run --rm -v "$PWD:/data" kdbx-git init --config /data/config.toml
 ```

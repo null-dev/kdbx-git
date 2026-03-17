@@ -113,7 +113,11 @@ fn git_commit_parents(git_dir: &Path, rev: &str) -> Vec<String> {
 
 fn spawn_sync_process(config_path: &Path, local_path: &Path) -> Child {
     Command::new(sync_local_binary())
-        .args([config_path.to_str().unwrap(), local_path.to_str().unwrap()])
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            local_path.to_str().unwrap(),
+        ])
         .env("RUST_LOG", "kdbx_git=warn")
         .env("NO_COLOR", "1")
         .env("CLICOLOR", "0")
@@ -1749,7 +1753,11 @@ async fn sync_local_persists_pending_promote_state_before_promote_completes() {
     assert!(put.status().is_success());
 
     let mut sync_process = Command::new(sync_local_binary())
-        .args([config_path.to_str().unwrap(), local_path.to_str().unwrap()])
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            local_path.to_str().unwrap(),
+        ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

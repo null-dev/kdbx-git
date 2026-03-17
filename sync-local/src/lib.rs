@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use color_eyre::eyre::{bail, Result};
+use clap::Parser;
+use color_eyre::eyre::Result;
 
 pub mod config;
 pub mod sync;
@@ -15,8 +16,17 @@ pub enum CliCommand {
     },
 }
 
-fn usage() -> &'static str {
-    "usage: kdbx-git-sync-local [--once] [--poll] [config.toml] <local.kdbx>"
+#[derive(Debug, Parser)]
+#[command(name = "kdbx-git-sync-local", disable_help_subcommand = true)]
+struct RawCli {
+    #[arg(long, default_value = "config.toml")]
+    config: PathBuf,
+    #[arg(long)]
+    once: bool,
+    #[arg(long)]
+    poll: bool,
+    #[arg()]
+    local_path: PathBuf,
 }
 
 pub fn init_observability() -> Result<()> {
@@ -35,46 +45,13 @@ pub fn parse_cli_args<I>(args: I) -> Result<CliCommand>
 where
     I: IntoIterator<Item = String>,
 {
-    let mut args: Vec<String> = args.into_iter().collect();
-    if !args.is_empty() {
-        args.remove(0);
-    }
-
-    let mut once = false;
-    let mut poll = false;
-    let mut positionals = Vec::new();
-    let mut i = 0;
-
-    while i < args.len() {
-        match args[i].as_str() {
-            "--once" => {
-                once = true;
-                i += 1;
-            }
-            "--poll" => {
-                poll = true;
-                i += 1;
-            }
-            "--help" | "-h" if args.len() == 1 => bail!(usage()),
-            value if value.starts_with('-') => bail!("unknown sync-local flag: {value}"),
-            _ => {
-                positionals.push(args[i].clone());
-                i += 1;
-            }
-        }
-    }
-
-    let (config_path, local_path) = match positionals.as_slice() {
-        [local_path] => (PathBuf::from("config.toml"), PathBuf::from(local_path)),
-        [config_path, local_path] => (PathBuf::from(config_path), PathBuf::from(local_path)),
-        _ => bail!(usage()),
-    };
+    let raw = RawCli::try_parse_from(args)?;
 
     Ok(CliCommand::SyncLocal {
-        config_path,
-        local_path,
-        once,
-        poll,
+        config_path: raw.config,
+        local_path: raw.local_path,
+        once: raw.once,
+        poll: raw.poll,
     })
 }
 
@@ -145,9 +122,10 @@ mod tests {
         assert_eq!(
             parse_cli_args([
                 "kdbx-git-sync-local".into(),
+                "--config".into(),
+                "custom.toml".into(),
                 "--once".into(),
                 "--poll".into(),
-                "custom.toml".into(),
                 "alice.kdbx".into(),
             ])
             .unwrap(),

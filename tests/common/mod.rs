@@ -269,6 +269,10 @@ pub fn sync_local_binary() -> &'static Path {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
 
     BIN.get_or_init(|| {
+        if let Some(path) = std::env::var_os("CARGO_BIN_EXE_kdbx-git-sync-local") {
+            return PathBuf::from(path);
+        }
+
         let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let target_dir = std::env::var_os("CARGO_TARGET_DIR")
             .map(PathBuf::from)
@@ -284,10 +288,6 @@ pub fn sync_local_binary() -> &'static Path {
             "kdbx-git-sync-local"
         };
         let binary_path = target_dir.join(profile).join(binary_name);
-
-        if binary_path.exists() {
-            return binary_path;
-        }
 
         let status = Command::new("cargo")
             .args([

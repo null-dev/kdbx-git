@@ -10,6 +10,7 @@ edition = "2021"
 axum = "0.8"
 base64 = "0.22"
 bytes = "1"
+clap = { version = "4", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 color-eyre = "0.6"
 dav-server = "0.11"
@@ -47,6 +48,7 @@ split-debuginfo = "unpacked"
 axum.workspace = true
 base64.workspace = true
 bytes.workspace = true
+clap.workspace = true
 color-eyre.workspace = true
 dav-server.workspace = true
 eyre.workspace = true
@@ -67,6 +69,7 @@ color-eyre.workspace = true
 futures-util.workspace = true
 http.workspace = true
 keepass.workspace = true
+clap.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

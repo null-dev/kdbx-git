@@ -97,18 +97,18 @@ Tests marked ✅ are already implemented. All others need to be written.
 
 ## Sync API endpoints
 
-- [ ] `POST /sync/{client_id}/merge-from-main` returns 204 when client branch already contains main
-- [ ] `POST /sync/{client_id}/merge-from-main` returns 200 with KDBX body and `X-Merge-Commit-Id` / `X-Expected-Branch-Tip` headers when a merge is needed
-- [ ] `POST /sync/{client_id}/merge-from-main` when main does not exist returns 204
-- [ ] `POST /sync/{client_id}/merge-from-main` when client branch does not exist: returns merged content and `X-Expected-Branch-Tip: none`
-- [ ] `POST /sync/{client_id}/promote-merge/{commit_id}?expected-tip=none` creates the client branch pointing at the commit
-- [ ] `POST /sync/{client_id}/promote-merge/{commit_id}?expected-tip={hex}` advances the client branch when the tip matches
-- [ ] `POST /sync/{client_id}/promote-merge/{commit_id}?expected-tip={hex}` returns 409 when the branch tip has changed since the merge was created
-- [ ] `POST /sync/{client_id}/promote-merge/{bad_hex}` returns 400
-- [ ] `POST /sync/{client_id}/promote-merge/{commit_id}?expected-tip={bad_hex}` returns 400
-- [ ] SSE stream at `/sync/{client_id}/events` fires a `branch-updated` event when main advances after a WebDAV PUT
-- [ ] SSE stream sends a `ready` event immediately on connection before any updates
-- [ ] SSE stream does not fire when a WebDAV PUT results in a no-op (content unchanged)
+- ✅ `POST /sync/{client_id}/merge-from-main` returns 204 when client branch already contains main
+- ✅ `POST /sync/{client_id}/merge-from-main` returns 200 with KDBX body and `X-Merge-Commit-Id` / `X-Expected-Branch-Tip` headers when a merge is needed
+- ✅ `POST /sync/{client_id}/merge-from-main` when main does not exist returns 204
+- ✅ `POST /sync/{client_id}/merge-from-main` when client branch does not exist: returns merged content and `X-Expected-Branch-Tip: none`
+- ✅ `POST /sync/{client_id}/promote-merge/{commit_id}?expected-tip=none` creates the client branch pointing at the commit
+- ✅ `POST /sync/{client_id}/promote-merge/{commit_id}?expected-tip={hex}` advances the client branch when the tip matches
+- ✅ `POST /sync/{client_id}/promote-merge/{commit_id}?expected-tip={hex}` returns 409 when the branch tip has changed since the merge was created
+- ✅ `POST /sync/{client_id}/promote-merge/{bad_hex}` returns 400
+- ✅ `POST /sync/{client_id}/promote-merge/{commit_id}?expected-tip={bad_hex}` returns 400
+- ✅ SSE stream at `/sync/{client_id}/events` fires a `branch-updated` event when main advances after a WebDAV PUT
+- ✅ SSE stream sends a `ready` event immediately on connection before any updates
+- ✅ SSE stream does not fire when a WebDAV PUT results in a no-op (content unchanged)
 
 ---
 

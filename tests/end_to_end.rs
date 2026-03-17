@@ -330,6 +330,86 @@ fn spawn_sse_listener(
     (handle, rx)
 }
 
+struct SyncMergeHttpResult {
+    commit_id: String,
+    expected_tip: String,
+    body: Vec<u8>,
+}
+
+async fn post_sync_merge_from_main(
+    client: &Client,
+    username: &str,
+    password: &str,
+    base_url: &str,
+    client_id: &str,
+) -> reqwest::Response {
+    authed(
+        client,
+        username,
+        password,
+        reqwest::Method::POST,
+        &format!("{}/sync/{client_id}/merge-from-main", base_url),
+    )
+    .send()
+    .await
+    .unwrap()
+}
+
+async fn post_sync_merge_from_main_ok(
+    client: &Client,
+    username: &str,
+    password: &str,
+    base_url: &str,
+    client_id: &str,
+) -> SyncMergeHttpResult {
+    let response = post_sync_merge_from_main(client, username, password, base_url, client_id).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let commit_id = response
+        .headers()
+        .get("X-Merge-Commit-Id")
+        .and_then(|value| value.to_str().ok())
+        .unwrap()
+        .to_string();
+    let expected_tip = response
+        .headers()
+        .get("X-Expected-Branch-Tip")
+        .and_then(|value| value.to_str().ok())
+        .unwrap()
+        .to_string();
+    let body = response.bytes().await.unwrap().to_vec();
+
+    SyncMergeHttpResult {
+        commit_id,
+        expected_tip,
+        body,
+    }
+}
+
+async fn post_sync_promote_merge(
+    client: &Client,
+    username: &str,
+    password: &str,
+    base_url: &str,
+    client_id: &str,
+    commit_id: &str,
+    expected_tip: &str,
+) -> reqwest::Response {
+    authed(
+        client,
+        username,
+        password,
+        reqwest::Method::POST,
+        &format!(
+            "{}/sync/{}/promote-merge/{}?expected-tip={}",
+            base_url, client_id, commit_id, expected_tip
+        ),
+    )
+    .send()
+    .await
+    .unwrap()
+}
+
 fn replace_main_with_corrupt_commit(git_dir: &Path, parent: &str) {
     let blob_id = git(
         git_dir,
@@ -2039,4 +2119,549 @@ async fn unknown_client_paths_return_unauthorized() {
             .and_then(|value| value.to_str().ok()),
         Some("Basic realm=\"kdbx-git\"")
     );
+}
+
+#[tokio::test]
+async fn sync_merge_from_main_returns_no_content_when_client_branch_already_contains_main() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let alice_db = sample_db("Alice DB", "Alice Entry");
+    let put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(put.status().is_success());
+
+    let response = post_sync_merge_from_main(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(response.headers().get("X-Merge-Commit-Id").is_none());
+    assert!(response.headers().get("X-Expected-Branch-Tip").is_none());
+    assert!(response.bytes().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn sync_merge_from_main_returns_kdbx_and_headers_when_merge_is_needed() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+
+    let alice_db = sample_db("Shared DB", "Alice Entry");
+    let alice_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(alice_put.status().is_success());
+
+    let bob_get = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(bob_get.status(), StatusCode::OK);
+    let mut bob_db = parse_kdbx_bytes(&bob_get.bytes().await.unwrap(), &config.database);
+    add_entry(
+        &mut bob_db,
+        "00000000-0000-0000-0000-000000000020",
+        "Bob Entry",
+        "bob",
+        "bobpass",
+    );
+    let bob_put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(bob_put.status().is_success());
+
+    let alice_tip_before = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+
+    let merge = post_sync_merge_from_main_ok(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+    )
+    .await;
+    assert!(!merge.commit_id.is_empty());
+    assert_eq!(merge.expected_tip, alice_tip_before.to_hex().to_string());
+
+    let parsed = parse_kdbx_bytes(&merge.body, &config.database);
+    let titles = entry_titles(&parsed);
+    assert!(titles.contains(&"Alice Entry".to_string()));
+    assert!(titles.contains(&"Bob Entry".to_string()));
+}
+
+#[tokio::test]
+async fn sync_merge_from_main_returns_no_content_when_main_does_not_exist() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config, tempdir).await.unwrap();
+    let client = Client::new();
+
+    let response = post_sync_merge_from_main(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(response.bytes().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn sync_merge_from_main_returns_main_content_and_none_expected_tip_for_new_client_branch() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+
+    let bob_db = sample_db("Bob DB", "Bob Entry");
+    let bob_put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(bob_put.status().is_success());
+
+    let main_tip = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+    assert!(store.branch_tip_id("alice".into()).await.unwrap().is_none());
+
+    let merge = post_sync_merge_from_main_ok(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+    )
+    .await;
+    assert_eq!(merge.expected_tip, "none");
+    assert_eq!(merge.commit_id, main_tip.to_hex().to_string());
+    let parsed = parse_kdbx_bytes(&merge.body, &config.database);
+    assert_eq!(entry_titles(&parsed), vec!["Bob Entry".to_string()]);
+    assert!(store.branch_tip_id("alice".into()).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn sync_promote_merge_with_none_expected_tip_creates_client_branch() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+
+    let bob_db = sample_db("Bob DB", "Bob Entry");
+    let bob_put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(bob_put.status().is_success());
+
+    let merge = post_sync_merge_from_main_ok(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+    )
+    .await;
+    assert_eq!(merge.expected_tip, "none");
+
+    let promote = post_sync_promote_merge(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+        &merge.commit_id,
+        &merge.expected_tip,
+    )
+    .await;
+    assert_eq!(promote.status(), StatusCode::OK);
+
+    let alice_tip = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    assert_eq!(alice_tip.to_hex().to_string(), merge.commit_id);
+
+    let alice_get = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(alice_get.status(), StatusCode::OK);
+    let parsed = parse_kdbx_bytes(&alice_get.bytes().await.unwrap(), &config.database);
+    assert_eq!(entry_titles(&parsed), vec!["Bob Entry".to_string()]);
+}
+
+#[tokio::test]
+async fn sync_promote_merge_advances_client_branch_when_expected_tip_matches() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+
+    let alice_db = sample_db("Shared DB", "Alice Entry");
+    let alice_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(alice_put.status().is_success());
+
+    let bob_get = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(bob_get.status(), StatusCode::OK);
+    let mut bob_db = parse_kdbx_bytes(&bob_get.bytes().await.unwrap(), &config.database);
+    add_entry(
+        &mut bob_db,
+        "00000000-0000-0000-0000-000000000021",
+        "Bob Entry",
+        "bob",
+        "bobpass",
+    );
+    let bob_put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(bob_put.status().is_success());
+
+    let merge = post_sync_merge_from_main_ok(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+    )
+    .await;
+    assert_ne!(merge.expected_tip, "none");
+
+    let promote = post_sync_promote_merge(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+        &merge.commit_id,
+        &merge.expected_tip,
+    )
+    .await;
+    assert_eq!(promote.status(), StatusCode::OK);
+
+    let alice_tip = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    assert_eq!(alice_tip.to_hex().to_string(), merge.commit_id);
+
+    let reconcile = post_sync_merge_from_main(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+    )
+    .await;
+    assert_eq!(reconcile.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn sync_promote_merge_returns_conflict_when_branch_tip_changes() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let mut alice_db = sample_db("Shared DB", "Alice Entry");
+    let alice_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(alice_put.status().is_success());
+
+    let bob_get = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(bob_get.status(), StatusCode::OK);
+    let mut bob_db = parse_kdbx_bytes(&bob_get.bytes().await.unwrap(), &config.database);
+    add_entry(
+        &mut bob_db,
+        "00000000-0000-0000-0000-000000000022",
+        "Bob Entry",
+        "bob",
+        "bobpass",
+    );
+    let bob_put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(bob_put.status().is_success());
+
+    let merge = post_sync_merge_from_main_ok(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+    )
+    .await;
+
+    add_entry(
+        &mut alice_db,
+        "00000000-0000-0000-0000-000000000023",
+        "Alice Branch Entry",
+        "alice",
+        "branchpass",
+    );
+    let alice_rewrite = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(alice_rewrite.status().is_success());
+
+    let promote = post_sync_promote_merge(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+        &merge.commit_id,
+        &merge.expected_tip,
+    )
+    .await;
+    assert_eq!(promote.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn sync_promote_merge_rejects_bad_commit_hex() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config, tempdir).await.unwrap();
+    let client = Client::new();
+
+    let response = post_sync_promote_merge(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+        "not-hex",
+        "none",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn sync_promote_merge_rejects_bad_expected_tip_hex() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let bob_db = sample_db("Bob DB", "Bob Entry");
+    let bob_put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(bob_put.status().is_success());
+
+    let merge = post_sync_merge_from_main_ok(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+    )
+    .await;
+
+    let response = post_sync_promote_merge(
+        &client,
+        "alice-user",
+        "alice-pass",
+        &server.base_url,
+        "alice",
+        &merge.commit_id,
+        "not-hex",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn sync_events_stream_emits_branch_updated_when_main_advances() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let (sse_handle, mut sse_events) = spawn_sse_listener(
+        client.clone(),
+        "alice-user",
+        "alice-pass",
+        format!("{}/sync/alice/events", server.base_url),
+    );
+
+    let ready = tokio::time::timeout(Duration::from_secs(5), sse_events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ready.0, "ready");
+
+    let bob_db = sample_db("Bob DB", "Bob Entry");
+    let bob_put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(bob_put.status().is_success());
+
+    let update = tokio::time::timeout(Duration::from_secs(5), sse_events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(update.0, "branch-updated");
+    assert!(update.1.parse::<u64>().unwrap() >= 1);
+
+    sse_handle.abort();
+}
+
+#[tokio::test]
+async fn sync_events_stream_sends_ready_immediately() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config, tempdir).await.unwrap();
+    let client = Client::new();
+
+    let (sse_handle, mut sse_events) = spawn_sse_listener(
+        client,
+        "alice-user",
+        "alice-pass",
+        format!("{}/sync/alice/events", server.base_url),
+    );
+
+    let ready = tokio::time::timeout(Duration::from_secs(5), sse_events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ready.0, "ready");
+    assert_eq!(ready.1, "0");
+
+    sse_handle.abort();
 }

@@ -3,8 +3,7 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    add_entry, build_kdbx_bytes, entry_titles, parse_kdbx_bytes, sample_db, test_config,
-    TestServer,
+    add_entry, build_kdbx_bytes, entry_titles, parse_kdbx_bytes, sample_db, test_config, TestServer,
 };
 use kdbx_git::sync::{sync_local, SyncLocalOptions};
 use reqwest::{Client, StatusCode};

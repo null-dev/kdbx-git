@@ -238,9 +238,7 @@ impl GitStore {
                 expected,
                 new: Target::Object(new_commit),
             },
-            name: full_ref_name
-                .try_into()
-                .wrap_err("invalid ref name")?,
+            name: full_ref_name.try_into().wrap_err("invalid ref name")?,
             deref: false,
         };
 
@@ -288,9 +286,7 @@ impl GitStore {
                 expected: PreviousValue::Any,
                 new: Target::Object(new_commit),
             },
-            name: full_ref_name
-                .try_into()
-                .wrap_err("invalid ref name")?,
+            name: full_ref_name.try_into().wrap_err("invalid ref name")?,
             deref: false,
         };
 
@@ -308,9 +304,7 @@ impl GitStore {
                 expected: PreviousValue::Any,
                 log: RefLog::AndReference,
             },
-            name: full_ref_name
-                .try_into()
-                .wrap_err("invalid ref name")?,
+            name: full_ref_name.try_into().wrap_err("invalid ref name")?,
             deref: false,
         };
 
@@ -655,7 +649,10 @@ impl GitStore {
         };
 
         if unchanged {
-            info!("Client '{}': content unchanged, skipping commit", client_branch);
+            info!(
+                "Client '{}': content unchanged, skipping commit",
+                client_branch
+            );
             return Ok(vec![]);
         }
 
@@ -741,10 +738,8 @@ impl GitStore {
             main_storage
         } else {
             match Self::read_branch_sync(repo, client_branch, format)? {
-                Some(client_storage) => {
-                    merge_databases(&client_storage, &main_storage)
-                        .wrap_err("failed to merge main into client branch")?
-                }
+                Some(client_storage) => merge_databases(&client_storage, &main_storage)
+                    .wrap_err("failed to merge main into client branch")?,
                 None => main_storage,
             }
         };
@@ -1084,23 +1079,18 @@ mod tests {
             .await
             .unwrap();
         assert!(!updated.is_empty(), "first write should update branches");
-        let tip_after_first = store
-            .branch_tip_id("alice".into())
-            .await
-            .unwrap()
-            .unwrap();
+        let tip_after_first = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
 
         // Second write with identical content — should be a no-op.
         let updated2 = store
             .process_client_write("alice".into(), simple_db("Alice DB"))
             .await
             .unwrap();
-        assert!(updated2.is_empty(), "unchanged write should update no branches");
-        let tip_after_second = store
-            .branch_tip_id("alice".into())
-            .await
-            .unwrap()
-            .unwrap();
+        assert!(
+            updated2.is_empty(),
+            "unchanged write should update no branches"
+        );
+        let tip_after_second = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
         assert_eq!(
             tip_after_first, tip_after_second,
             "branch tip should not advance on unchanged write"
@@ -1112,11 +1102,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!updated3.is_empty(), "changed write should update branches");
-        let tip_after_third = store
-            .branch_tip_id("alice".into())
-            .await
-            .unwrap()
-            .unwrap();
+        let tip_after_third = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
         assert_ne!(
             tip_after_second, tip_after_third,
             "branch tip should advance on changed write"
@@ -1319,10 +1305,7 @@ mod tests {
         assert_eq!(bob_db.meta.database_name, Some("alice-db".into()));
 
         // Simulate bob's WebDAV read: merge main into bob's branch
-        let updated = store
-            .merge_main_into_branch("bob".into())
-            .await
-            .unwrap();
+        let updated = store.merge_main_into_branch("bob".into()).await.unwrap();
         assert!(updated, "bob's branch should have been updated");
 
         let bob_db = store.read_branch("bob".into()).await.unwrap().unwrap();
@@ -1357,11 +1340,7 @@ mod tests {
 
         // Promote it.
         store
-            .promote_sync_merge_commit(
-                "bob".into(),
-                result.commit_id,
-                result.expected_branch_tip,
-            )
+            .promote_sync_merge_commit("bob".into(), result.commit_id, result.expected_branch_tip)
             .await
             .unwrap();
 
@@ -1399,11 +1378,7 @@ mod tests {
 
         // Promotion should fail with BranchConflictError.
         let err = store
-            .promote_sync_merge_commit(
-                "bob".into(),
-                result.commit_id,
-                result.expected_branch_tip,
-            )
+            .promote_sync_merge_commit("bob".into(), result.commit_id, result.expected_branch_tip)
             .await
             .unwrap_err();
 

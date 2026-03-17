@@ -64,10 +64,7 @@ struct BranchConflictError;
 
 impl std::fmt::Display for BranchConflictError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "branch was modified unexpectedly; sync-local is exiting"
-        )
+        write!(f, "branch was modified unexpectedly; sync-local is exiting")
     }
 }
 impl std::error::Error for BranchConflictError {}
@@ -151,7 +148,10 @@ async fn run_sync_local(
                 // Let the writer finish flushing before we read the file.
                 sleep(Duration::from_millis(400)).await;
                 if let Err(e) = syncer.push_local_to_webdav().await {
-                    warn!("sync-local '{}': push failed: {e:#}", syncer.options.client_id);
+                    warn!(
+                        "sync-local '{}': push failed: {e:#}",
+                        syncer.options.client_id
+                    );
                 }
             }
             other => match syncer.reconcile(other).await {
@@ -187,7 +187,12 @@ struct RemoteSyncer {
 }
 
 impl RemoteSyncer {
-    fn new(client: ClientConfig, http: Client, base_url: String, options: SyncLocalOptions) -> Self {
+    fn new(
+        client: ClientConfig,
+        http: Client,
+        base_url: String,
+        options: SyncLocalOptions,
+    ) -> Self {
         let state_path = PathBuf::from(format!("{}.sync-state.json", options.local_path.display()));
         Self {
             client,
@@ -264,7 +269,10 @@ impl RemoteSyncer {
             );
             self.do_promote(&pending.commit_id, pending.expected_branch_tip.as_deref())
                 .await?;
-            self.save_state(&SyncState { pending_promote: None }).await;
+            self.save_state(&SyncState {
+                pending_promote: None,
+            })
+            .await;
         }
 
         // Step 2 – request a fresh merge from the server.
@@ -299,7 +307,10 @@ impl RemoteSyncer {
         //           transient errors; fatal on 409 Conflict).
         self.do_promote(&commit_id, expected_tip.as_deref()).await?;
 
-        self.save_state(&SyncState { pending_promote: None }).await;
+        self.save_state(&SyncState {
+            pending_promote: None,
+        })
+        .await;
 
         info!(
             "sync-local '{}': merge promoted successfully",
@@ -359,9 +370,7 @@ impl RemoteSyncer {
     ///
     /// Returns `None` on 204 (nothing to merge), or `Some((kdbx_bytes,
     /// commit_id, expected_branch_tip))` on success.
-    async fn request_merge_from_main(
-        &self,
-    ) -> Result<Option<(Vec<u8>, String, Option<String>)>> {
+    async fn request_merge_from_main(&self) -> Result<Option<(Vec<u8>, String, Option<String>)>> {
         let response = self
             .http
             .post(self.merge_from_main_url())

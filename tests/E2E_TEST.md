@@ -21,17 +21,17 @@ Tests marked ✅ are already implemented. All others need to be written.
 ## WebDAV — Write path
 
 - ✅ `malformed_uploads_and_wrong_kdbx_password_are_rejected` — malformed body → 403; KDBX encrypted with wrong master password → 403; branch is not created
-- [ ] PUT with valid KDBX creates the client branch and commits to main
-- [ ] PUT with valid KDBX response status is 2xx (201 Created or 204 No Content)
-- [ ] PUT creates a git commit with a meaningful message referencing the client id
-- [ ] Second PUT with identical content does not create a new commit (no-op dedup)
-- [ ] Second PUT with identical content does not fire an SSE event
-- [ ] Second PUT with changed content does create a new commit and updates main
-- [ ] PUT advances main only when the client → main merge succeeds
-- [ ] PUT to a branch that is behind main still commits to the client branch and attempts merge to main
-- [ ] Concurrent PUTs from two clients are serialised: both commits appear in main's history in some order
-- [ ] PUT with an empty KDBX body (zero bytes) returns 403/400 and does not commit
-- [ ] PUT followed immediately by GET returns the newly written content (write-then-read consistency)
+- ✅ PUT with valid KDBX creates the client branch and commits to main
+- ✅ PUT with valid KDBX response status is 2xx (201 Created or 204 No Content)
+- ✅ PUT creates a git commit with a meaningful message referencing the client id
+- ✅ Second PUT with identical content does not create a new commit (no-op dedup)
+- ✅ Second PUT with identical content does not fire an SSE event
+- ✅ Second PUT with changed content does create a new commit and updates main
+- ✅ PUT advances main only when the client → main merge succeeds
+- ✅ PUT to a branch that is behind main still commits to the client branch and attempts merge to main
+- ✅ Concurrent PUTs from two clients are serialised: both commits appear in main's history in some order
+- ✅ PUT with an empty KDBX body (zero bytes) returns 403/400 and does not commit
+- ✅ PUT followed immediately by GET returns the newly written content (write-then-read consistency)
 
 ## WebDAV — Auth
 

@@ -4,15 +4,18 @@ use std::{
     io::Write,
     path::Path,
     process::{Command, Stdio},
+    time::Duration,
 };
 
 use common::{
     add_entry, build_kdbx_bytes, entry_titles, parse_kdbx_bytes, sample_db, test_config,
     write_config, write_source_kdbx, TestServer, MASTER_PASSWORD,
 };
+use futures_util::StreamExt;
 use kdbx_git::{init::init_from_config_path, store::GitStore};
 use reqwest::{header, Client, StatusCode};
 use tempfile::TempDir;
+use tokio::{sync::mpsc, time::sleep};
 
 fn authed(
     client: &Client,
@@ -80,6 +83,94 @@ fn git(git_dir: &Path, args: &[&str], stdin: Option<&[u8]>) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+fn git_rev_count(git_dir: &Path, rev: &str) -> usize {
+    git(git_dir, &["rev-list", "--count", rev], None)
+        .parse()
+        .unwrap()
+}
+
+fn git_log_subjects(git_dir: &Path, rev: &str) -> Vec<String> {
+    let output = git(git_dir, &["log", "--format=%s", rev], None);
+    if output.is_empty() {
+        vec![]
+    } else {
+        output.lines().map(|line| line.to_string()).collect()
+    }
+}
+
+async fn wait_for<F, Fut>(timeout_after: Duration, mut check: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + timeout_after;
+    loop {
+        if check().await {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "condition was not met before timeout"
+        );
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
+fn spawn_sse_listener(
+    client: Client,
+    username: &str,
+    password: &str,
+    url: String,
+) -> (
+    tokio::task::JoinHandle<()>,
+    mpsc::UnboundedReceiver<(String, String)>,
+) {
+    let username = username.to_string();
+    let password = password.to_string();
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    let handle = tokio::spawn(async move {
+        let response = client
+            .get(&url)
+            .basic_auth(&username, Some(&password))
+            .header(header::ACCEPT, "text/event-stream")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.unwrap();
+            buffer.push_str(&String::from_utf8_lossy(&bytes));
+            buffer = buffer.replace("\r\n", "\n");
+
+            while let Some(idx) = buffer.find("\n\n") {
+                let frame = buffer[..idx].to_string();
+                buffer = buffer[idx + 2..].to_string();
+
+                let mut event_name = None;
+                let mut data_lines = Vec::new();
+                for line in frame.lines() {
+                    if let Some(name) = line.strip_prefix("event:") {
+                        event_name = Some(name.trim().to_string());
+                    } else if let Some(data) = line.strip_prefix("data:") {
+                        data_lines.push(data.trim().to_string());
+                    }
+                }
+
+                if let Some(name) = event_name {
+                    let _ = tx.send((name, data_lines.join("\n")));
+                }
+            }
+        }
+    });
+
+    (handle, rx)
 }
 
 fn replace_main_with_corrupt_commit(git_dir: &Path, parent: &str) {
@@ -703,6 +794,503 @@ async fn malformed_uploads_and_wrong_kdbx_password_are_rejected() {
 
     let store = GitStore::open_or_init(&server.config.git_store).unwrap();
     assert!(store.read_branch("alice".into()).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn valid_put_creates_client_branch_and_main_with_success_status_and_commit_message() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let alice_db = sample_db("Alice Write", "Alice Entry");
+    let put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(
+        put.status().is_success(),
+        "unexpected PUT status: {}",
+        put.status()
+    );
+
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+    let alice_tip = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    let main_tip = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+    assert_eq!(alice_tip, main_tip, "main should advance to alice's write");
+
+    let alice_branch = store.read_branch("alice".into()).await.unwrap().unwrap();
+    let main_branch = store.read_branch("main".into()).await.unwrap().unwrap();
+    assert_storage_eq(&alice_branch, &alice_db);
+    assert_storage_eq(&main_branch, &alice_db);
+
+    let subjects = git_log_subjects(&config.git_store, "main");
+    assert_eq!(subjects[0], "write from client 'alice'");
+    assert!(
+        subjects[0].contains("alice"),
+        "commit message should reference the client id: {subjects:?}"
+    );
+}
+
+#[tokio::test]
+async fn second_identical_put_is_a_noop_and_does_not_fire_sse_event() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let alice_db = sample_db("Alice Stable", "Alice Entry");
+    let first_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(first_put.status().is_success());
+
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+    let alice_tip_before = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    let main_tip_before = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+    let main_rev_count_before = git_rev_count(&config.git_store, "main");
+
+    let (sse_handle, mut sse_events) = spawn_sse_listener(
+        client.clone(),
+        "alice-user",
+        "alice-pass",
+        format!("{}/sync/alice/events", server.base_url),
+    );
+
+    let ready = tokio::time::timeout(Duration::from_secs(5), sse_events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ready.0, "ready");
+
+    let second_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(second_put.status().is_success());
+
+    let alice_tip_after = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    let main_tip_after = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+    assert_eq!(alice_tip_after, alice_tip_before);
+    assert_eq!(main_tip_after, main_tip_before);
+    assert_eq!(
+        git_rev_count(&config.git_store, "main"),
+        main_rev_count_before
+    );
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(750), sse_events.recv())
+            .await
+            .is_err(),
+        "identical PUT should not emit an SSE branch-updated event"
+    );
+
+    sse_handle.abort();
+}
+
+#[tokio::test]
+async fn second_changed_put_creates_new_commit_and_updates_main() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let mut alice_db = sample_db("Alice Version 1", "Alice Entry");
+    let first_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(first_put.status().is_success());
+
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+    let alice_tip_before = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    let main_tip_before = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+    let main_rev_count_before = git_rev_count(&config.git_store, "main");
+
+    add_entry(
+        &mut alice_db,
+        "00000000-0000-0000-0000-000000000014",
+        "Alice Changed Entry",
+        "alice",
+        "updated-secret",
+    );
+
+    let second_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(second_put.status().is_success());
+
+    let alice_tip_after = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    let main_tip_after = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+    assert_ne!(alice_tip_after, alice_tip_before);
+    assert_ne!(main_tip_after, main_tip_before);
+    assert_eq!(alice_tip_after, main_tip_after);
+    assert_eq!(
+        git_rev_count(&config.git_store, "main"),
+        main_rev_count_before + 1
+    );
+
+    let main_branch = store.read_branch("main".into()).await.unwrap().unwrap();
+    let titles = entry_titles(&main_branch);
+    assert!(titles.contains(&"Alice Entry".to_string()));
+    assert!(titles.contains(&"Alice Changed Entry".to_string()));
+}
+
+#[tokio::test]
+async fn put_advances_main_only_when_client_merge_succeeds() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+
+    let seed_main = sample_db("Seed Main", "Seed Entry");
+    store
+        .commit_to_branch("main".into(), seed_main, "seed main".into())
+        .await
+        .unwrap();
+    store.ensure_client_branch("alice".into()).await.unwrap();
+
+    let alice_tip_before = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    let clean_main_tip = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+    replace_main_with_corrupt_commit(&config.git_store, &clean_main_tip.to_hex().to_string());
+    let corrupt_main_tip = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+    let alice_db = sample_db("Alice After Corruption", "Alice Entry");
+
+    let put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(
+        put.status().is_success(),
+        "client branch write should still succeed even if merge to main fails"
+    );
+
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+    let alice_tip_after = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    let main_tip_after = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+    assert_ne!(alice_tip_after, alice_tip_before);
+    assert_eq!(
+        main_tip_after, corrupt_main_tip,
+        "main should not advance when the merge fails"
+    );
+
+    let alice_branch = store.read_branch("alice".into()).await.unwrap().unwrap();
+    assert_storage_eq(&alice_branch, &alice_db);
+}
+
+#[tokio::test]
+async fn put_to_branch_behind_main_commits_client_branch_and_merges_into_main() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let mut alice_db = sample_db("Shared DB", "Alice Entry");
+    let alice_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(alice_put.status().is_success());
+
+    let bob_get = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(bob_get.status(), StatusCode::OK);
+    let mut bob_db = parse_kdbx_bytes(&bob_get.bytes().await.unwrap(), &config.database);
+    add_entry(
+        &mut bob_db,
+        "00000000-0000-0000-0000-000000000015",
+        "Bob Entry",
+        "bob",
+        "bob-secret",
+    );
+    let bob_put = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(bob_put.status().is_success());
+
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+    let alice_tip_before = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    let main_tip_before = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+
+    add_entry(
+        &mut alice_db,
+        "00000000-0000-0000-0000-000000000016",
+        "Alice Catch-up Entry",
+        "alice",
+        "alice-secret",
+    );
+    let stale_alice_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(stale_alice_put.status().is_success());
+
+    let alice_tip_after = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+    let main_tip_after = store.branch_tip_id("main".into()).await.unwrap().unwrap();
+    assert_ne!(alice_tip_after, alice_tip_before);
+    assert_ne!(main_tip_after, main_tip_before);
+
+    let alice_branch = store.read_branch("alice".into()).await.unwrap().unwrap();
+    let alice_titles = entry_titles(&alice_branch);
+    assert!(alice_titles.contains(&"Alice Entry".to_string()));
+    assert!(alice_titles.contains(&"Alice Catch-up Entry".to_string()));
+    assert!(
+        !alice_titles.contains(&"Bob Entry".to_string()),
+        "alice's own branch should contain her write, not an eager fan-out from main"
+    );
+
+    let main_branch = store.read_branch("main".into()).await.unwrap().unwrap();
+    let main_titles = entry_titles(&main_branch);
+    assert!(main_titles.contains(&"Alice Entry".to_string()));
+    assert!(main_titles.contains(&"Alice Catch-up Entry".to_string()));
+    assert!(main_titles.contains(&"Bob Entry".to_string()));
+    assert_eq!(
+        git_log_subjects(&config.git_store, "main")[0],
+        "merge 'alice' into 'main'"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_puts_from_two_clients_are_serialized_in_main_history() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let base_db = sample_db("Shared Base", "Base Entry");
+    let seed_put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&base_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(seed_put.status().is_success());
+
+    let bob_get = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(bob_get.status(), StatusCode::OK);
+    let mut bob_db = parse_kdbx_bytes(&bob_get.bytes().await.unwrap(), &config.database);
+
+    let mut alice_db = base_db.clone();
+    add_entry(
+        &mut alice_db,
+        "00000000-0000-0000-0000-000000000017",
+        "Alice Concurrent Entry",
+        "alice",
+        "alice-pass-2",
+    );
+    add_entry(
+        &mut bob_db,
+        "00000000-0000-0000-0000-000000000018",
+        "Bob Concurrent Entry",
+        "bob",
+        "bob-pass-2",
+    );
+
+    let alice_request = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database));
+    let bob_request = authed(
+        &client,
+        "bob-user",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database));
+
+    let (alice_put, bob_put) = tokio::join!(alice_request.send(), bob_request.send());
+    let alice_put = alice_put.unwrap();
+    let bob_put = bob_put.unwrap();
+    assert!(alice_put.status().is_success());
+    assert!(bob_put.status().is_success());
+
+    wait_for(Duration::from_secs(5), || {
+        let store_path = config.git_store.clone();
+        async move {
+            let subjects = git_log_subjects(&store_path, "main");
+            subjects.iter().any(|subject| subject.contains("alice"))
+                && subjects.iter().any(|subject| subject.contains("bob"))
+        }
+    })
+    .await;
+
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+    let main_branch = store.read_branch("main".into()).await.unwrap().unwrap();
+    let titles = entry_titles(&main_branch);
+    assert!(titles.contains(&"Alice Concurrent Entry".to_string()));
+    assert!(titles.contains(&"Bob Concurrent Entry".to_string()));
+}
+
+#[tokio::test]
+async fn empty_put_body_is_rejected_without_committing() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(Vec::new())
+    .send()
+    .await
+    .unwrap();
+    assert!(
+        matches!(
+            put.status(),
+            StatusCode::FORBIDDEN | StatusCode::BAD_REQUEST
+        ),
+        "unexpected status for empty upload: {}",
+        put.status()
+    );
+
+    let store = GitStore::open_or_init(&config.git_store).unwrap();
+    assert!(store.branch_tip_id("alice".into()).await.unwrap().is_none());
+    assert!(store.branch_tip_id("main".into()).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn put_followed_immediately_by_get_returns_newly_written_content() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path(), None);
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let mut alice_db = sample_db("Write Then Read", "Alice Entry");
+    add_entry(
+        &mut alice_db,
+        "00000000-0000-0000-0000-000000000019",
+        "Write Then Read Entry",
+        "alice",
+        "read-after-write",
+    );
+
+    let put = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&alice_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(put.status().is_success());
+
+    let get = authed(
+        &client,
+        "alice-user",
+        "alice-pass",
+        reqwest::Method::GET,
+        &format!("{}/dav/alice/database.kdbx", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(get.status(), StatusCode::OK);
+
+    let fetched = parse_kdbx_bytes(&get.bytes().await.unwrap(), &config.database);
+    assert_storage_eq(&fetched, &alice_db);
 }
 
 #[tokio::test]

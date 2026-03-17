@@ -1446,6 +1446,12 @@ async fn sync_local_reverting_to_old_local_state_after_remote_update_pushes_agai
     })
     .await;
 
+    // Let the pull-induced self-write watcher event drain before we overwrite
+    // the file again; otherwise the next local write can race with the pending
+    // debounce window and become flaky in the full suite.
+    sleep(Duration::from_millis(1200)).await;
+    assert_eq!(proxy.alice_put_count(), 1);
+
     tokio::fs::write(&local_path, &alice_bytes).await.unwrap();
 
     wait_for(|| {

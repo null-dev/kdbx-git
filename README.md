@@ -7,6 +7,7 @@ Each client gets its own branch and WebDAV credentials:
 - client writes land on that client's branch first
 - the server merges the client branch into `main`
 - successful `main` updates are fanned back out to the other client branches
+- successful `main` updates can also trigger UnifiedPush wakeups for registered mobile clients
 
 The state of the KDBX database is stored unencrypted in the git store as pretty JSON by default so the history is readable with normal git tooling.
 
@@ -35,6 +36,7 @@ Notes:
 
 - `database.password` / `database.keyfile` are the master credentials used to decrypt uploads and re-encrypt downloads.
 - `git_store` is a bare repo, so inspect it with commands like `git --git-dir ./store.git log --stat main`.
+- the server also keeps `sync-state.json` next to `git_store` to persist registered UnifiedPush endpoints for instant mobile sync
 
 ## Sync-Local Client Configuration
 
@@ -88,16 +90,36 @@ Point each client at its own WebDAV file:
 
 The database's master password/key file is still the KDBX master credential from the server config's `[database]` section.
 
+## Instant Sync For Mobile Clients
+
+Mobile clients can register a UnifiedPush endpoint with the server:
+
+- `POST /push/<client-id>/endpoint` with JSON body `{"endpoint":"https://..."}`
+- `DELETE /push/<client-id>/endpoint` to unregister
+
+These endpoints use the same HTTP Basic credentials as WebDAV:
+
+- username: the client `id`
+- password: the matching client `password`
+
+After a successful write that advances `main`, the server sends a best-effort `POST` with
+`{"event":"branch-updated"}` to every registered endpoint URL. Delivery runs in the
+background with a short timeout, so the uploading client does not wait for push fan-out.
+
+Endpoint registrations are stored in `sync-state.json`, pruned if they have not been
+refreshed for 14 days, and removed automatically if the push provider responds with `404`
+or `410`.
+
 ## Local File Sync
 
 `kdbx-git-sync-local` keeps a local `.kdbx` file and a single client branch in sync through the server:
 
 - it downloads/uploads through the same authenticated server endpoints the clients use
-- remote branch changes are pushed to the CLI through a server event stream
+- remote branch changes are pushed to the CLI through a server event stream (`GET /sync/<client-id>/events`)
 - local file changes are picked up from filesystem notifications by default, with optional polling fallback via `--poll`
 - if both sides diverge, it runs the same KeePass-level merge logic and updates both sides
 
-This is useful if you want branch-backed syncing without mounting WebDAV in your desktop workflow.
+This is useful if you want branch-backed syncing without mounting WebDAV in your desktop workflow. The SSE event stream is used by `sync-local`; UnifiedPush is the instant-sync path intended for mobile clients.
 
 ## Docker
 

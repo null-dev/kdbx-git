@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn concurrent_puts_from_two_clients_are_serialized_in_main_history() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -129,7 +129,7 @@ async fn concurrent_puts_from_two_clients_are_serialized_in_main_history() {
 #[tokio::test]
 async fn three_clients_writes_converge_for_all_clients() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -240,7 +240,7 @@ async fn three_clients_writes_converge_for_all_clients() {
 #[tokio::test]
 async fn sync_merge_from_main_returns_no_content_when_client_branch_already_contains_main() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -275,7 +275,7 @@ async fn sync_merge_from_main_returns_no_content_when_client_branch_already_cont
 #[tokio::test]
 async fn sync_merge_from_main_returns_kdbx_and_headers_when_merge_is_needed() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let store = GitStore::open_or_init(&config.git_store).unwrap();
@@ -348,7 +348,7 @@ async fn sync_merge_from_main_returns_kdbx_and_headers_when_merge_is_needed() {
 #[tokio::test]
 async fn sync_merge_from_main_returns_no_content_when_main_does_not_exist() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
 
@@ -367,7 +367,7 @@ async fn sync_merge_from_main_returns_no_content_when_main_does_not_exist() {
 #[tokio::test]
 async fn sync_merge_from_main_returns_main_content_and_none_expected_tip_for_new_client_branch() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let store = GitStore::open_or_init(&config.git_store).unwrap();
@@ -407,7 +407,7 @@ async fn sync_merge_from_main_returns_main_content_and_none_expected_tip_for_new
 #[tokio::test]
 async fn sync_promote_merge_with_none_expected_tip_creates_client_branch() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let store = GitStore::open_or_init(&config.git_store).unwrap();
@@ -469,7 +469,7 @@ async fn sync_promote_merge_with_none_expected_tip_creates_client_branch() {
 #[tokio::test]
 async fn sync_promote_merge_advances_client_branch_when_expected_tip_matches() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let store = GitStore::open_or_init(&config.git_store).unwrap();
@@ -559,7 +559,7 @@ async fn sync_promote_merge_advances_client_branch_when_expected_tip_matches() {
 #[tokio::test]
 async fn sync_promote_merge_returns_conflict_when_branch_tip_changes() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -654,7 +654,7 @@ async fn sync_promote_merge_returns_conflict_when_branch_tip_changes() {
 #[tokio::test]
 async fn sync_promote_merge_rejects_bad_commit_hex() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
 
@@ -674,7 +674,7 @@ async fn sync_promote_merge_rejects_bad_commit_hex() {
 #[tokio::test]
 async fn sync_promote_merge_rejects_bad_expected_tip_hex() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -717,7 +717,7 @@ async fn sync_promote_merge_rejects_bad_expected_tip_hex() {
 #[tokio::test]
 async fn sync_events_stream_emits_branch_updated_when_main_advances() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -761,7 +761,7 @@ async fn sync_events_stream_emits_branch_updated_when_main_advances() {
 #[tokio::test]
 async fn sync_events_stream_sends_ready_immediately() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
 
@@ -785,7 +785,7 @@ async fn sync_events_stream_sends_ready_immediately() {
 #[tokio::test]
 async fn get_after_sync_promote_still_returns_correct_merged_content() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -877,7 +877,7 @@ async fn get_after_sync_promote_still_returns_correct_merged_content() {
 #[tokio::test]
 async fn sync_merge_from_main_catches_up_branch_far_behind_main_in_one_call() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let store = GitStore::open_or_init(&config.git_store).unwrap();

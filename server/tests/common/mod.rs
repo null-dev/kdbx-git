@@ -57,19 +57,18 @@ impl Drop for TestServer {
     }
 }
 
-pub fn test_credentials(source_path: Option<PathBuf>) -> DatabaseCredentials {
+pub fn test_credentials() -> DatabaseCredentials {
     DatabaseCredentials {
-        path: source_path,
         password: Some(MASTER_PASSWORD.to_string()),
         keyfile: None,
     }
 }
 
-pub fn test_config(root: &Path, source_path: Option<PathBuf>) -> Config {
+pub fn test_config(root: &Path) -> Config {
     Config {
         git_store: root.join("store.git"),
         bind_addr: "127.0.0.1:0".to_string(),
-        database: test_credentials(source_path),
+        database: test_credentials(),
         clients: vec![
             ClientConfig {
                 id: "alice".into(),

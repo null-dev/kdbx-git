@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn nested_groups_survive_put_get_round_trip() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -58,7 +58,7 @@ async fn nested_groups_survive_put_get_round_trip() {
 #[tokio::test]
 async fn custom_entry_fields_survive_put_get_round_trip() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -118,7 +118,7 @@ async fn custom_entry_fields_survive_put_get_round_trip() {
 #[tokio::test]
 async fn deleted_entries_do_not_reappear_after_merge_on_read() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -199,7 +199,7 @@ async fn deleted_entries_do_not_reappear_after_merge_on_read() {
 #[tokio::test]
 async fn modified_entries_are_visible_to_other_clients_after_merge_on_read() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -285,7 +285,7 @@ async fn modified_entries_are_visible_to_other_clients_after_merge_on_read() {
 #[tokio::test]
 async fn conflicting_same_uuid_edits_merge_deterministically() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -415,7 +415,7 @@ async fn conflicting_same_uuid_edits_merge_deterministically() {
 #[tokio::test]
 async fn database_name_metadata_survives_put_get_round_trip() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 

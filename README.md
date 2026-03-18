@@ -19,7 +19,6 @@ git_store = "./store.git"
 bind_addr = "0.0.0.0:8080"
 
 [database]
-path = "./seed.kdbx"
 password = "correct horse battery staple"
 # keyfile = "./database.keyx"
 
@@ -36,7 +35,6 @@ password = "phone-webdav-password"
 
 Notes:
 
-- `database.path` is required for `--init` and points at the existing KDBX file to import.
 - `database.password` / `database.keyfile` are the master credentials used to decrypt uploads and re-encrypt downloads.
 - `git_store` is a bare repo, so inspect it with commands like `git --git-dir ./store.git log --stat main`.
 
@@ -56,7 +54,7 @@ password = "laptop-webdav-password"
 Import an existing KDBX file into the git store:
 
 ```bash
-cargo run -p kdbx-git -- init --config config.toml
+cargo run -p kdbx-git -- init --config config.toml ./seed.kdbx
 ```
 
 Start the server:
@@ -116,5 +114,5 @@ docker run --rm -p 8080:8080 -v "$PWD:/data" kdbx-git --config /data/config.toml
 If you are bootstrapping a fresh store inside the container, run:
 
 ```bash
-docker run --rm -v "$PWD:/data" kdbx-git init --config /data/config.toml
+docker run --rm -v "$PWD:/data" kdbx-git init --config /data/config.toml /data/seed.kdbx
 ```

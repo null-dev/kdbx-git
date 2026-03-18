@@ -415,7 +415,7 @@ async fn request_pending_promote(client: &Client, base_url: &str) -> (Vec<u8>, T
 #[tokio::test]
 async fn sync_local_creates_branch_and_pulls_from_main() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
@@ -465,7 +465,7 @@ async fn sync_local_creates_branch_and_pulls_from_main() {
 #[tokio::test]
 async fn sync_local_updates_local_file_when_main_advances() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let local_path = server.temp_root().join("alice-local.kdbx");
     let client = Client::new();
@@ -580,7 +580,7 @@ async fn sync_local_updates_local_file_when_main_advances() {
 #[tokio::test]
 async fn sync_local_once_when_already_up_to_date_does_not_modify_local_file() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
@@ -621,7 +621,7 @@ async fn sync_local_once_when_already_up_to_date_does_not_modify_local_file() {
 #[tokio::test]
 async fn sync_local_once_when_main_does_not_exist_exits_without_creating_local_file() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let local_path = server.temp_root().join("alice-local.kdbx");
 
@@ -648,7 +648,7 @@ async fn sync_local_once_when_main_does_not_exist_exits_without_creating_local_f
 #[tokio::test]
 async fn sync_local_processes_multiple_rapid_sse_updates() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let local_path = server.temp_root().join("alice-local.kdbx");
     let client = Client::new();
@@ -767,7 +767,7 @@ async fn sync_local_processes_multiple_rapid_sse_updates() {
 #[tokio::test]
 async fn sync_local_pull_writes_valid_kdbx_file() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
@@ -811,7 +811,7 @@ async fn sync_local_pull_writes_valid_kdbx_file() {
 #[tokio::test]
 async fn sync_local_promotes_pull_result_onto_alice_branch() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let store = GitStore::open_or_init(&config.git_store).unwrap();
     let base_db = sample_db("Base DB", "Shared Entry");
     store
@@ -881,7 +881,7 @@ async fn sync_local_promotes_pull_result_onto_alice_branch() {
 #[tokio::test]
 async fn sync_local_pull_followed_by_merge_from_main_returns_204() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
@@ -929,7 +929,7 @@ async fn sync_local_pull_followed_by_merge_from_main_returns_204() {
 #[tokio::test]
 async fn sync_local_pull_writes_local_file_atomically() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
@@ -1071,7 +1071,7 @@ async fn sync_local_pull_writes_local_file_atomically() {
 #[tokio::test]
 async fn sync_local_pull_does_not_immediately_push_file_back_to_server() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let proxy = ProxyServer::start(server.base_url.clone(), false).await;
     let client = Client::new();
@@ -1120,7 +1120,7 @@ async fn sync_local_pull_does_not_immediately_push_file_back_to_server() {
 #[tokio::test]
 async fn sync_local_reconnects_sse_and_receives_later_updates() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let proxy = ProxyServer::start(server.base_url.clone(), true).await;
     let client = Client::new();
@@ -1202,7 +1202,7 @@ async fn sync_local_reconnects_sse_and_receives_later_updates() {
 #[tokio::test]
 async fn sync_local_local_edits_are_uploaded_via_webdav_put() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let proxy = ProxyServer::start(server.base_url.clone(), false).await;
     let client = Client::new();
@@ -1255,7 +1255,7 @@ async fn sync_local_local_edits_are_uploaded_via_webdav_put() {
 #[tokio::test]
 async fn sync_local_local_push_advances_main() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let local_path = server.temp_root().join("alice-local.kdbx");
     let store = GitStore::open_or_init(&config.git_store).unwrap();
@@ -1286,7 +1286,7 @@ async fn sync_local_local_push_advances_main() {
 #[tokio::test]
 async fn sync_local_push_pulls_back_round_tripped_merged_result() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
@@ -1362,7 +1362,7 @@ async fn sync_local_push_pulls_back_round_tripped_merged_result() {
 #[tokio::test]
 async fn sync_local_identical_resave_does_not_create_server_commit() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let proxy = ProxyServer::start(server.base_url.clone(), false).await;
     let local_path = server.temp_root().join("alice-local.kdbx");
@@ -1405,7 +1405,7 @@ async fn sync_local_identical_resave_does_not_create_server_commit() {
 #[tokio::test]
 async fn sync_local_reverting_to_old_local_state_after_remote_update_pushes_again() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let proxy = ProxyServer::start(server.base_url.clone(), false).await;
     let client = Client::new();
@@ -1477,7 +1477,7 @@ async fn sync_local_reverting_to_old_local_state_after_remote_update_pushes_agai
 #[tokio::test]
 async fn sync_local_alice_push_eventually_updates_bobs_local_file() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let alice_local_path = server.temp_root().join("alice-local.kdbx");
     let bob_local_path = server.temp_root().join("bob-local.kdbx");
@@ -1525,7 +1525,7 @@ async fn sync_local_alice_push_eventually_updates_bobs_local_file() {
 #[tokio::test]
 async fn sync_local_bob_push_eventually_updates_alices_local_file() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let alice_local_path = server.temp_root().join("alice-local.kdbx");
     let bob_local_path = server.temp_root().join("bob-local.kdbx");
@@ -1570,7 +1570,7 @@ async fn sync_local_bob_push_eventually_updates_alices_local_file() {
 #[tokio::test]
 async fn sync_local_rapid_local_saves_are_debounced_into_single_put() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let proxy = ProxyServer::start(server.base_url.clone(), false).await;
     let local_path = server.temp_root().join("alice-local.kdbx");
@@ -1613,7 +1613,7 @@ async fn sync_local_rapid_local_saves_are_debounced_into_single_put() {
 #[tokio::test]
 async fn sync_local_missing_local_file_on_push_event_does_not_crash() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
@@ -1674,7 +1674,7 @@ async fn sync_local_missing_local_file_on_push_event_does_not_crash() {
 #[tokio::test]
 async fn sync_local_preexisting_local_file_is_pushed_on_first_start() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
@@ -1720,7 +1720,7 @@ async fn sync_local_preexisting_local_file_is_pushed_on_first_start() {
 #[tokio::test]
 async fn sync_local_persists_pending_promote_state_before_promote_completes() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let proxy = ProxyServer::start_with_options(
         server.base_url.clone(),
@@ -1790,7 +1790,7 @@ async fn sync_local_persists_pending_promote_state_before_promote_completes() {
 #[tokio::test]
 async fn sync_local_recovers_pending_promote_and_clears_state_file() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
@@ -1860,7 +1860,7 @@ async fn sync_local_recovers_pending_promote_and_clears_state_file() {
 #[tokio::test]
 async fn sync_local_recovery_branch_conflict_is_fatal() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
     let local_path = server.temp_root().join("alice-local.kdbx");
@@ -1923,7 +1923,7 @@ async fn sync_local_recovery_branch_conflict_is_fatal() {
 #[tokio::test]
 async fn sync_local_stale_pending_promote_reports_useful_error() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let local_path = server.temp_root().join("alice-local.kdbx");
 
@@ -1967,7 +1967,7 @@ async fn sync_local_stale_pending_promote_reports_useful_error() {
 #[tokio::test]
 async fn sync_local_warns_when_event_stream_rejects_credentials() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let proxy = ProxyServer::start_with_options(
         server.base_url.clone(),
@@ -2018,7 +2018,7 @@ async fn sync_local_warns_when_event_stream_rejects_credentials() {
 #[tokio::test]
 async fn sync_local_warns_when_merge_from_main_rejects_credentials() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let proxy = ProxyServer::start_with_options(
         server.base_url.clone(),
@@ -2085,7 +2085,7 @@ async fn sync_local_warns_when_merge_from_main_rejects_credentials() {
 #[tokio::test]
 async fn sync_endpoints_reject_cross_client_credentials() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
 
@@ -2117,7 +2117,7 @@ async fn sync_endpoints_reject_cross_client_credentials() {
 #[tokio::test]
 async fn sync_local_once_exits_after_initial_reconcile_without_starting_sse() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let proxy = ProxyServer::start(server.base_url.clone(), false).await;
     let client = Client::new();
@@ -2163,7 +2163,7 @@ async fn sync_local_once_exits_after_initial_reconcile_without_starting_sse() {
 #[tokio::test]
 async fn sync_local_unknown_client_id_returns_clear_error() {
     let tempdir = TempDir::new().unwrap();
-    let server_config = test_config(tempdir.path(), None);
+    let server_config = test_config(tempdir.path());
     let local_path = tempdir.path().join("nobody-local.kdbx");
 
     let err = sync_local(

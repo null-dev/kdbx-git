@@ -6,18 +6,12 @@ use kdbx_git_common::{kdbx::parse_kdbx_sync, store::GitStore};
 use tokio::task::spawn_blocking;
 use tracing::info;
 
-pub async fn init_from_config_path(config_path: &Path) -> Result<()> {
+pub async fn init_from_config_path(config_path: &Path, source_path: &Path) -> Result<()> {
     let config = Config::from_file(config_path)?;
-    init_from_config(&config).await
+    init_from_config(&config, source_path).await
 }
 
-pub async fn init_from_config(config: &Config) -> Result<()> {
-    let source_path = config
-        .database
-        .path
-        .as_deref()
-        .ok_or_else(|| eyre::eyre!("config.database.path is required for --init"))?;
-
+pub async fn init_from_config(config: &Config, source_path: &Path) -> Result<()> {
     let bytes = std::fs::read(source_path).wrap_err_with(|| {
         format!(
             "failed to read source KDBX file at {}",

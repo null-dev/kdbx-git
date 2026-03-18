@@ -5,13 +5,15 @@ async fn init_imports_main_and_git_history_is_readable() {
     let tempdir = TempDir::new().unwrap();
     let source_db = sample_db("Imported DB", "Imported Entry");
     let source_path = tempdir.path().join("source.kdbx");
-    let config = test_config(tempdir.path(), Some(source_path.clone()));
+    let config = test_config(tempdir.path());
     let config_path = tempdir.path().join("config.toml");
 
     write_source_kdbx(&source_path, &source_db, &config.database);
     write_config(&config_path, &config);
 
-    init_from_config_path(&config_path).await.unwrap();
+    init_from_config_path(&config_path, &source_path)
+        .await
+        .unwrap();
 
     let store = GitStore::open_or_init(&config.git_store).unwrap();
     let main = store
@@ -60,7 +62,7 @@ async fn init_imports_main_and_git_history_is_readable() {
 #[tokio::test]
 async fn client_writes_merge_and_fan_out_across_clients() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -150,7 +152,7 @@ async fn client_writes_merge_and_fan_out_across_clients() {
 #[tokio::test]
 async fn get_when_client_branch_does_not_yet_exist_returns_404() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -174,7 +176,7 @@ async fn get_when_client_branch_does_not_yet_exist_returns_404() {
 #[tokio::test]
 async fn get_when_only_client_branch_exists_returns_clients_own_content() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let store = GitStore::open_or_init(&config.git_store).unwrap();
     let alice_db = sample_db("Alice Only DB", "Alice Only Entry");
     store
@@ -207,7 +209,7 @@ async fn get_when_only_client_branch_exists_returns_clients_own_content() {
 #[tokio::test]
 async fn get_after_clients_own_put_returns_that_same_content() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -256,7 +258,7 @@ async fn get_after_clients_own_put_returns_that_same_content() {
 #[tokio::test]
 async fn get_always_includes_content_from_main_even_when_client_never_wrote_anything() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -304,7 +306,7 @@ async fn get_always_includes_content_from_main_even_when_client_never_wrote_anyt
 #[tokio::test]
 async fn get_triggers_merge_on_read_when_client_branch_is_behind_main() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -388,7 +390,7 @@ async fn get_triggers_merge_on_read_when_client_branch_is_behind_main() {
 #[tokio::test]
 async fn get_when_merge_on_read_fails_still_returns_clients_stale_data() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let store = GitStore::open_or_init(&config.git_store).unwrap();
 
     store
@@ -440,7 +442,7 @@ async fn get_when_merge_on_read_fails_still_returns_clients_stale_data() {
 #[tokio::test]
 async fn get_on_directory_path_returns_autoindex_listing_containing_database_kdbx() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
 
@@ -472,7 +474,7 @@ async fn get_on_directory_path_returns_autoindex_listing_containing_database_kdb
 async fn propfind_on_database_kdbx_returns_multistatus_with_content_length_and_last_modified_properties(
 ) {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -510,7 +512,7 @@ async fn propfind_on_database_kdbx_returns_multistatus_with_content_length_and_l
 #[tokio::test]
 async fn propfind_on_root_collection_lists_exactly_one_entry_database_kdbx() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
 
@@ -534,7 +536,7 @@ async fn propfind_on_root_collection_lists_exactly_one_entry_database_kdbx() {
 #[tokio::test]
 async fn malformed_uploads_and_wrong_kdbx_password_are_rejected() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -554,7 +556,6 @@ async fn malformed_uploads_and_wrong_kdbx_password_are_rejected() {
     let wrong_bytes = build_kdbx_bytes(
         &sample_db("Wrong Password DB", "Rejected Entry"),
         &kdbx_git::config::DatabaseCredentials {
-            path: None,
             password: Some(format!("{MASTER_PASSWORD}-wrong")),
             keyfile: None,
         },
@@ -579,7 +580,7 @@ async fn malformed_uploads_and_wrong_kdbx_password_are_rejected() {
 #[tokio::test]
 async fn valid_put_creates_client_branch_and_main_with_success_status_and_commit_message() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -622,7 +623,7 @@ async fn valid_put_creates_client_branch_and_main_with_success_status_and_commit
 #[tokio::test]
 async fn second_identical_put_is_a_noop_and_does_not_fire_sse_event() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -693,7 +694,7 @@ async fn second_identical_put_is_a_noop_and_does_not_fire_sse_event() {
 #[tokio::test]
 async fn second_changed_put_creates_new_commit_and_updates_main() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -756,7 +757,7 @@ async fn second_changed_put_creates_new_commit_and_updates_main() {
 #[tokio::test]
 async fn put_advances_main_only_when_client_merge_succeeds() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let store = GitStore::open_or_init(&config.git_store).unwrap();
 
     let seed_main = sample_db("Seed Main", "Seed Entry");
@@ -807,7 +808,7 @@ async fn put_advances_main_only_when_client_merge_succeeds() {
 #[tokio::test]
 async fn put_to_branch_behind_main_commits_client_branch_and_merges_into_main() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -909,7 +910,7 @@ async fn put_to_branch_behind_main_commits_client_branch_and_merges_into_main() 
 #[tokio::test]
 async fn empty_put_body_is_rejected_without_committing() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -941,7 +942,7 @@ async fn empty_put_body_is_rejected_without_committing() {
 #[tokio::test]
 async fn put_followed_immediately_by_get_returns_newly_written_content() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
 
@@ -986,7 +987,7 @@ async fn put_followed_immediately_by_get_returns_newly_written_content() {
 #[tokio::test]
 async fn auth_failures_return_basic_auth_challenge() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
 
@@ -1020,7 +1021,7 @@ async fn auth_failures_return_basic_auth_challenge() {
 #[tokio::test]
 async fn correct_credentials_do_not_grant_access_to_another_clients_dav_endpoint() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
 
@@ -1048,7 +1049,7 @@ async fn correct_credentials_do_not_grant_access_to_another_clients_dav_endpoint
 #[tokio::test]
 async fn username_from_one_client_with_another_clients_password_is_rejected() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
 
@@ -1069,7 +1070,7 @@ async fn username_from_one_client_with_another_clients_password_is_rejected() {
 #[tokio::test]
 async fn credentials_are_case_sensitive() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
 
@@ -1090,7 +1091,7 @@ async fn credentials_are_case_sensitive() {
 #[tokio::test]
 async fn unknown_client_paths_return_unauthorized() {
     let tempdir = TempDir::new().unwrap();
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
 

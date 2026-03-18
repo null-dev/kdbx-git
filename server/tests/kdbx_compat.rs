@@ -28,7 +28,7 @@ use reqwest::{Client, StatusCode};
 use tempfile::TempDir;
 
 fn decrypted_xml(db: &kdbx_git::storage::types::StorageDatabase) -> String {
-    let creds = test_credentials(None);
+    let creds = test_credentials();
     let bytes = build_kdbx_bytes(db, &creds);
     let xml = Database::get_xml(
         &mut bytes.as_slice(),
@@ -111,7 +111,7 @@ fn non_default_kdbx_config() -> DatabaseConfig {
 }
 
 fn build_kdbx_bytes_with_config(db: &StorageDatabase, config: DatabaseConfig) -> Vec<u8> {
-    let creds = test_credentials(None);
+    let creds = test_credentials();
     let keepass_db =
         storage_to_db_with_config(db, config).expect("failed to build keepass database");
     let mut bytes = Vec::new();
@@ -162,7 +162,7 @@ fn info_line(output: &str, prefix: &str) -> String {
 }
 
 fn read_database_config(mut bytes: &[u8]) -> DatabaseConfig {
-    let creds = test_credentials(None);
+    let creds = test_credentials();
     Database::open(&mut bytes, kdbx_git::kdbx::make_key(&creds).unwrap())
         .expect("failed to reopen KDBX")
         .config
@@ -230,14 +230,16 @@ async fn init_roundtrip_preserves_crypto_config() {
     let source_db = sample_db("Imported DB", "Imported Entry");
     let source_path = tempdir.path().join("source.kdbx");
     let roundtrip_path = tempdir.path().join("roundtrip.kdbx");
-    let config = test_config(tempdir.path(), Some(source_path.clone()));
+    let config = test_config(tempdir.path());
     let config_path = tempdir.path().join("config.toml");
 
     let source_bytes = build_kdbx_bytes_with_config(&source_db, non_default_kdbx_config());
     std::fs::write(&source_path, &source_bytes).unwrap();
     write_config(&config_path, &config);
 
-    init_from_config_path(&config_path).await.unwrap();
+    init_from_config_path(&config_path, &source_path)
+        .await
+        .unwrap();
 
     let server = TestServer::start(config, tempdir).await.unwrap();
     let roundtrip_bytes = fetch_database(&server.base_url, "bob", "bob-user", "bob-pass").await;
@@ -256,7 +258,7 @@ async fn webdav_roundtrip_preserves_uploaded_crypto_config() {
     let tempdir = TempDir::new().unwrap();
     let source_path = tempdir.path().join("uploaded.kdbx");
     let roundtrip_path = tempdir.path().join("roundtrip.kdbx");
-    let config = test_config(tempdir.path(), None);
+    let config = test_config(tempdir.path());
     let server = TestServer::start(config, tempdir).await.unwrap();
 
     let source_db = sample_db("Uploaded DB", "Uploaded Entry");

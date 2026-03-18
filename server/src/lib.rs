@@ -12,8 +12,13 @@ pub use kdbx_git_common::{kdbx, storage, store};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
-    Serve { config_path: PathBuf },
-    Init { config_path: PathBuf },
+    Serve {
+        config_path: PathBuf,
+    },
+    Init {
+        config_path: PathBuf,
+        source_path: PathBuf,
+    },
 }
 
 #[derive(Debug, Parser)]
@@ -27,7 +32,7 @@ struct RawCli {
 
 #[derive(Debug, Subcommand)]
 enum RawCommand {
-    Init,
+    Init { source_path: PathBuf },
 }
 
 pub fn init_observability() -> Result<()> {
@@ -53,8 +58,9 @@ where
         None => Ok(CliCommand::Serve {
             config_path: raw.config,
         }),
-        Some(RawCommand::Init) => Ok(CliCommand::Init {
+        Some(RawCommand::Init { source_path }) => Ok(CliCommand::Init {
             config_path: raw.config,
+            source_path,
         }),
     }
 }
@@ -67,7 +73,10 @@ where
 
     match parse_cli_args(args)? {
         CliCommand::Serve { config_path } => serve_from_config_path(&config_path).await,
-        CliCommand::Init { config_path } => init::init_from_config_path(&config_path).await,
+        CliCommand::Init {
+            config_path,
+            source_path,
+        } => init::init_from_config_path(&config_path, &source_path).await,
     }
 }
 
@@ -102,11 +111,13 @@ mod tests {
                 "kdbx-git".into(),
                 "init".into(),
                 "--config".into(),
-                "custom.toml".into()
+                "custom.toml".into(),
+                "seed.kdbx".into()
             ])
             .unwrap(),
             CliCommand::Init {
                 config_path: PathBuf::from("custom.toml"),
+                source_path: PathBuf::from("seed.kdbx"),
             }
         );
     }

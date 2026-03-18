@@ -18,13 +18,17 @@ const PUSH_DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const PUSH_DELIVERY_TTL_SECS: u32 = 30;
 const PUSH_TOPIC: &str = "branch-updated";
 const PUSH_NOTIFICATION_PAYLOAD: &[u8] = br#"{"event":"branch-updated"}"#;
+const PUSH_ERROR_BODY_LOG_LIMIT: usize = 512;
 
 pub(super) type PushDeliveryFuture<'a> =
     Pin<Box<dyn Future<Output = PushDeliveryResult> + Send + 'a>>;
 
 pub(super) enum PushDeliveryResult {
     Delivered,
-    Revoked(StatusCode),
+    Revoked {
+        status: StatusCode,
+        body: Option<String>,
+    },
     Failed(PushDeliveryError),
 }
 
@@ -112,7 +116,12 @@ impl PushDelivery for ReqwestPushDelivery {
                 Ok(Ok(response))
                     if matches!(response.status(), StatusCode::NOT_FOUND | StatusCode::GONE) =>
                 {
-                    PushDeliveryResult::Revoked(response.status())
+                    let status = response.status();
+                    let body = match response.text().await {
+                        Ok(text) => trim_log_body(text),
+                        Err(err) => Some(format!("<failed to read response body: {err}>")),
+                    };
+                    PushDeliveryResult::Revoked { status, body }
                 }
                 Ok(Ok(response)) => PushDeliveryResult::Failed(PushDeliveryError(format!(
                     "unexpected status {}",
@@ -173,10 +182,14 @@ impl AppState {
                 .post_branch_updated(&subscription, &self.vapid_keys)
                 .await
             {
-                PushDeliveryResult::Revoked(status) => {
+                PushDeliveryResult::Revoked { status, body } => {
+                    let body_suffix = body
+                        .as_deref()
+                        .map(|body| format!("; response body: {body}"))
+                        .unwrap_or_default();
                     warn!(
-                        "push delivery to '{}' for client '{}' returned {}; removing revoked subscription",
-                        subscription.endpoint, client_id, status
+                        "push delivery to '{}' for client '{}' returned {}; removing revoked subscription{}",
+                        subscription.endpoint, client_id, status, body_suffix
                     );
                     revoked.push(RevokedPushEndpoint {
                         client_id,
@@ -204,6 +217,28 @@ impl AppState {
 
         Ok(())
     }
+}
+
+fn trim_log_body(body: String) -> Option<String> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut chars = trimmed.chars();
+    let mut truncated = String::new();
+    for _ in 0..PUSH_ERROR_BODY_LOG_LIMIT {
+        let Some(ch) = chars.next() else {
+            return Some(trimmed.to_string());
+        };
+        truncated.push(ch);
+    }
+
+    if chars.next().is_some() {
+        truncated.push_str("...");
+    }
+
+    Some(truncated)
 }
 
 #[cfg(test)]
@@ -276,7 +311,7 @@ mod tests {
                     .unwrap_or(StatusCode::OK)
                 {
                     status @ (StatusCode::NOT_FOUND | StatusCode::GONE) => {
-                        PushDeliveryResult::Revoked(status)
+                        PushDeliveryResult::Revoked { status, body: None }
                     }
                     status if status.is_success() => PushDeliveryResult::Delivered,
                     status => PushDeliveryResult::Failed(PushDeliveryError(format!(

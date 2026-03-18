@@ -27,7 +27,7 @@ async fn init_imports_main_and_git_history_is_readable() {
     let client = Client::new();
     let response = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -70,7 +70,7 @@ async fn client_writes_merge_and_fan_out_across_clients() {
     let alice_bytes = build_kdbx_bytes(&alice_db, &config.database);
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -87,7 +87,7 @@ async fn client_writes_merge_and_fan_out_across_clients() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -110,7 +110,7 @@ async fn client_writes_merge_and_fan_out_across_clients() {
 
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -127,7 +127,7 @@ async fn client_writes_merge_and_fan_out_across_clients() {
 
     let alice_get = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -158,7 +158,7 @@ async fn get_when_client_branch_does_not_yet_exist_returns_404() {
 
     let response = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -189,7 +189,7 @@ async fn get_when_only_client_branch_exists_returns_clients_own_content() {
 
     let response = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -224,7 +224,7 @@ async fn get_after_clients_own_put_returns_that_same_content() {
 
     let put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -241,7 +241,7 @@ async fn get_after_clients_own_put_returns_that_same_content() {
 
     let get = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -265,7 +265,7 @@ async fn get_always_includes_content_from_main_even_when_client_never_wrote_anyt
     let bob_db = sample_db("Shared DB", "Bob Entry");
     let put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -286,7 +286,7 @@ async fn get_always_includes_content_from_main_even_when_client_never_wrote_anyt
 
     let response = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -313,7 +313,7 @@ async fn get_triggers_merge_on_read_when_client_branch_is_behind_main() {
     let mut alice_db = sample_db("Shared DB", "Alice Entry");
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -326,7 +326,7 @@ async fn get_triggers_merge_on_read_when_client_branch_is_behind_main() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -350,7 +350,7 @@ async fn get_triggers_merge_on_read_when_client_branch_is_behind_main() {
     );
     let alice_put_2 = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -363,7 +363,7 @@ async fn get_triggers_merge_on_read_when_client_branch_is_behind_main() {
 
     let bob_get_2 = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -421,7 +421,7 @@ async fn get_when_merge_on_read_fails_still_returns_clients_stale_data() {
 
     let response = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -448,7 +448,7 @@ async fn get_on_directory_path_returns_autoindex_listing_containing_database_kdb
 
     let response = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/", server.base_url),
@@ -481,7 +481,7 @@ async fn propfind_on_database_kdbx_returns_multistatus_with_content_length_and_l
     let alice_db = sample_db("Alice Props", "Alice Entry");
     let put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -494,7 +494,7 @@ async fn propfind_on_database_kdbx_returns_multistatus_with_content_length_and_l
 
     let response = authed_propfind(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         &format!("{}/dav/alice/database.kdbx", server.base_url),
         "0",
@@ -518,7 +518,7 @@ async fn propfind_on_root_collection_lists_exactly_one_entry_database_kdbx() {
 
     let response = authed_propfind(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         &format!("{}/dav/alice/", server.base_url),
         "1",
@@ -542,7 +542,7 @@ async fn malformed_uploads_and_wrong_kdbx_password_are_rejected() {
 
     let malformed = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -562,7 +562,7 @@ async fn malformed_uploads_and_wrong_kdbx_password_are_rejected() {
     );
     let wrong_password = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -587,7 +587,7 @@ async fn valid_put_creates_client_branch_and_main_with_success_status_and_commit
     let alice_db = sample_db("Alice Write", "Alice Entry");
     let put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -630,7 +630,7 @@ async fn second_identical_put_is_a_noop_and_does_not_fire_sse_event() {
     let alice_db = sample_db("Alice Stable", "Alice Entry");
     let first_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -648,7 +648,7 @@ async fn second_identical_put_is_a_noop_and_does_not_fire_sse_event() {
 
     let (sse_handle, mut sse_events) = spawn_sse_listener(
         client.clone(),
-        "alice-user",
+        "alice",
         "alice-pass",
         format!("{}/sync/alice/events", server.base_url),
     );
@@ -661,7 +661,7 @@ async fn second_identical_put_is_a_noop_and_does_not_fire_sse_event() {
 
     let second_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -701,7 +701,7 @@ async fn second_changed_put_creates_new_commit_and_updates_main() {
     let mut alice_db = sample_db("Alice Version 1", "Alice Entry");
     let first_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -727,7 +727,7 @@ async fn second_changed_put_creates_new_commit_and_updates_main() {
 
     let second_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -778,7 +778,7 @@ async fn put_advances_main_only_when_client_merge_succeeds() {
 
     let put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -815,7 +815,7 @@ async fn put_to_branch_behind_main_commits_client_branch_and_merges_into_main() 
     let mut alice_db = sample_db("Shared DB", "Alice Entry");
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -828,7 +828,7 @@ async fn put_to_branch_behind_main_commits_client_branch_and_merges_into_main() 
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -847,7 +847,7 @@ async fn put_to_branch_behind_main_commits_client_branch_and_merges_into_main() 
     );
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -871,7 +871,7 @@ async fn put_to_branch_behind_main_commits_client_branch_and_merges_into_main() 
     );
     let stale_alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -916,7 +916,7 @@ async fn empty_put_body_is_rejected_without_committing() {
 
     let put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -957,7 +957,7 @@ async fn put_followed_immediately_by_get_returns_newly_written_content() {
 
     let put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -970,7 +970,7 @@ async fn put_followed_immediately_by_get_returns_newly_written_content() {
 
     let get = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -1007,7 +1007,7 @@ async fn auth_failures_return_basic_auth_challenge() {
 
     let wrong_auth = authed(
         &client,
-        "alice-user",
+        "alice",
         "wrong-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -1027,7 +1027,7 @@ async fn correct_credentials_do_not_grant_access_to_another_clients_dav_endpoint
 
     let response = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -1055,7 +1055,7 @@ async fn username_from_one_client_with_another_clients_password_is_rejected() {
 
     let response = authed(
         &client,
-        "alice-user",
+        "alice",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -1076,7 +1076,7 @@ async fn credentials_are_case_sensitive() {
 
     let response = authed(
         &client,
-        "alice-user",
+        "alice",
         "Alice-Pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -1097,7 +1097,7 @@ async fn unknown_client_paths_return_unauthorized() {
 
     let response = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/nobody/database.kdbx", server.base_url),

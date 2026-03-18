@@ -28,10 +28,8 @@ pub struct DatabaseCredentials {
 /// Per-client configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClientConfig {
-    /// Unique client identifier; used as the git branch name.
+    /// Unique client identifier; used as the git branch name and HTTP username.
     pub id: String,
-    /// HTTP Basic Auth username for this client's WebDAV endpoint.
-    pub username: String,
     /// HTTP Basic Auth password for this client's WebDAV endpoint.
     pub password: String,
 }

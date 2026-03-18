@@ -372,7 +372,7 @@ async fn write_sync_state(local_path: &Path, state: &TestSyncState) {
 async fn request_pending_promote(client: &Client, base_url: &str) -> (Vec<u8>, TestPendingPromote) {
     let response = authed(
         client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::POST,
         &format!("{}/sync/alice/merge-from-main", base_url),
@@ -424,7 +424,7 @@ async fn sync_local_creates_branch_and_pulls_from_main() {
     let bob_db = sample_db("Bob DB", "Bob Entry");
     let put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -474,7 +474,7 @@ async fn sync_local_updates_local_file_when_main_advances() {
     let alice_db = sample_db("Shared DB", "Alice Entry");
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -489,7 +489,7 @@ async fn sync_local_updates_local_file_when_main_advances() {
     // entry and writes back.  Main now contains both entries; alice is behind.
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -508,7 +508,7 @@ async fn sync_local_updates_local_file_when_main_advances() {
     );
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -548,7 +548,7 @@ async fn sync_local_updates_local_file_when_main_advances() {
     );
     let bob_put2 = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -588,7 +588,7 @@ async fn sync_local_once_when_already_up_to_date_does_not_modify_local_file() {
     let alice_db = sample_db("Alice DB", "Alice Entry");
     let put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -656,7 +656,7 @@ async fn sync_local_processes_multiple_rapid_sse_updates() {
     let alice_db = sample_db("Shared DB", "Alice Entry");
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -669,7 +669,7 @@ async fn sync_local_processes_multiple_rapid_sse_updates() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -693,7 +693,7 @@ async fn sync_local_processes_multiple_rapid_sse_updates() {
     );
     let bob_put1 = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -713,7 +713,7 @@ async fn sync_local_processes_multiple_rapid_sse_updates() {
     );
     let bob_put2 = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -733,7 +733,7 @@ async fn sync_local_processes_multiple_rapid_sse_updates() {
     );
     let bob_put3 = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -775,7 +775,7 @@ async fn sync_local_pull_writes_valid_kdbx_file() {
     let bob_db = sample_db("Bob DB", "Bob Entry");
     let put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -889,7 +889,7 @@ async fn sync_local_pull_followed_by_merge_from_main_returns_204() {
     let bob_db = sample_db("Bob DB", "Bob Entry");
     let put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -915,7 +915,7 @@ async fn sync_local_pull_followed_by_merge_from_main_returns_204() {
 
     let response = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::POST,
         &format!("{}/sync/alice/merge-from-main", server.base_url),
@@ -937,7 +937,7 @@ async fn sync_local_pull_writes_local_file_atomically() {
     let bob_db = sample_db("Atomic DB", "Initial Entry");
     let put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -963,7 +963,7 @@ async fn sync_local_pull_writes_local_file_atomically() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -1033,7 +1033,7 @@ async fn sync_local_pull_writes_local_file_atomically() {
 
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -1080,7 +1080,7 @@ async fn sync_local_pull_does_not_immediately_push_file_back_to_server() {
     let bob_db = sample_db("Bob DB", "Bob Entry");
     let put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -1129,7 +1129,7 @@ async fn sync_local_reconnects_sse_and_receives_later_updates() {
     let alice_db = sample_db("Shared DB", "Alice Entry");
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -1152,7 +1152,7 @@ async fn sync_local_reconnects_sse_and_receives_later_updates() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -1171,7 +1171,7 @@ async fn sync_local_reconnects_sse_and_receives_later_updates() {
     );
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -1230,7 +1230,7 @@ async fn sync_local_local_edits_are_uploaded_via_webdav_put() {
         async move {
             match authed(
                 &client,
-                "alice-user",
+                "alice",
                 "alice-pass",
                 reqwest::Method::GET,
                 &format!("{}/dav/alice/database.kdbx", base_url),
@@ -1294,7 +1294,7 @@ async fn sync_local_push_pulls_back_round_tripped_merged_result() {
     let bob_db = sample_db("Shared DB", "Bob Entry");
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -1430,7 +1430,7 @@ async fn sync_local_reverting_to_old_local_state_after_remote_update_pushes_agai
     let bob_db = sample_db("Remote Update DB", "Bob Entry");
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -1649,7 +1649,7 @@ async fn sync_local_missing_local_file_on_push_event_does_not_crash() {
         async move {
             match authed(
                 &client,
-                "alice-user",
+                "alice",
                 "alice-pass",
                 reqwest::Method::GET,
                 &format!("{}/dav/alice/database.kdbx", base_url),
@@ -1695,7 +1695,7 @@ async fn sync_local_preexisting_local_file_is_pushed_on_first_start() {
         async move {
             match authed(
                 &client,
-                "alice-user",
+                "alice",
                 "alice-pass",
                 reqwest::Method::GET,
                 &format!("{}/dav/alice/database.kdbx", base_url),
@@ -1741,7 +1741,7 @@ async fn sync_local_persists_pending_promote_state_before_promote_completes() {
     let bob_db = sample_db("Recovery DB", "Bob Entry");
     let put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -1799,7 +1799,7 @@ async fn sync_local_recovers_pending_promote_and_clears_state_file() {
     let bob_db = sample_db("Recovery DB", "Bob Entry");
     let put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -1844,7 +1844,7 @@ async fn sync_local_recovers_pending_promote_and_clears_state_file() {
 
     let get = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -1868,7 +1868,7 @@ async fn sync_local_recovery_branch_conflict_is_fatal() {
     let bob_db = sample_db("Recovery DB", "Bob Entry");
     let put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -1892,7 +1892,7 @@ async fn sync_local_recovery_branch_conflict_is_fatal() {
     let alice_db = sample_db("Conflict DB", "Alice Branch Entry");
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -1987,7 +1987,7 @@ async fn sync_local_warns_when_event_stream_rejects_credentials() {
 
     let unauthorized = authed(
         &client,
-        "alice-user",
+        "alice",
         "wrong-pass",
         reqwest::Method::GET,
         &format!("{}/sync/alice/events", server.base_url),
@@ -2039,7 +2039,7 @@ async fn sync_local_warns_when_merge_from_main_rejects_credentials() {
 
     let unauthorized = authed(
         &client,
-        "alice-user",
+        "alice",
         "wrong-pass",
         reqwest::Method::POST,
         &format!("{}/sync/alice/merge-from-main", server.base_url),
@@ -2056,7 +2056,7 @@ async fn sync_local_warns_when_merge_from_main_rejects_credentials() {
     let bob_db = sample_db("Shared DB", "Bob Entry");
     let put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -2091,7 +2091,7 @@ async fn sync_endpoints_reject_cross_client_credentials() {
 
     let events = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/sync/bob/events", server.base_url),
@@ -2103,7 +2103,7 @@ async fn sync_endpoints_reject_cross_client_credentials() {
 
     let merge = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::POST,
         &format!("{}/sync/bob/merge-from-main", server.base_url),
@@ -2126,7 +2126,7 @@ async fn sync_local_once_exits_after_initial_reconcile_without_starting_sse() {
     let bob_db = sample_db("Shared DB", "Bob Entry");
     let put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),

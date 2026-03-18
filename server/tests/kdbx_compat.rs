@@ -242,7 +242,7 @@ async fn init_roundtrip_preserves_crypto_config() {
         .unwrap();
 
     let server = TestServer::start(config, tempdir).await.unwrap();
-    let roundtrip_bytes = fetch_database(&server.base_url, "bob", "bob-user", "bob-pass").await;
+    let roundtrip_bytes = fetch_database(&server.base_url, "bob", "bob", "bob-pass").await;
     std::fs::write(&roundtrip_path, &roundtrip_bytes).unwrap();
 
     assert_roundtrip_crypto_config(
@@ -268,7 +268,7 @@ async fn webdav_roundtrip_preserves_uploaded_crypto_config() {
     let client = Client::new();
     let put = client
         .put(format!("{}/dav/alice/database.kdbx", server.base_url))
-        .basic_auth("alice-user", Some("alice-pass"))
+        .basic_auth("alice", Some("alice-pass"))
         .body(source_bytes.clone())
         .send()
         .await
@@ -279,7 +279,7 @@ async fn webdav_roundtrip_preserves_uploaded_crypto_config() {
         put.status()
     );
 
-    let roundtrip_bytes = fetch_database(&server.base_url, "bob", "bob-user", "bob-pass").await;
+    let roundtrip_bytes = fetch_database(&server.base_url, "bob", "bob", "bob-pass").await;
     std::fs::write(&roundtrip_path, &roundtrip_bytes).unwrap();
 
     assert_roundtrip_crypto_config(

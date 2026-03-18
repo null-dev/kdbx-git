@@ -72,17 +72,14 @@ pub fn test_config(root: &Path) -> Config {
         clients: vec![
             ClientConfig {
                 id: "alice".into(),
-                username: "alice-user".into(),
                 password: "alice-pass".into(),
             },
             ClientConfig {
                 id: "bob".into(),
-                username: "bob-user".into(),
                 password: "bob-pass".into(),
             },
             ClientConfig {
                 id: "carol".into(),
-                username: "carol-user".into(),
                 password: "carol-pass".into(),
             },
         ],
@@ -251,7 +248,6 @@ pub fn sync_local_config(server: &Config, client_id: &str, server_url: String) -
     SyncLocalConfig {
         server_url,
         client_id: client.id.clone(),
-        username: client.username.clone(),
         password: client.password.clone(),
     }
 }

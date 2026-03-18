@@ -28,7 +28,7 @@ async fn nested_groups_survive_put_get_round_trip() {
 
     let put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -41,7 +41,7 @@ async fn nested_groups_survive_put_get_round_trip() {
 
     let get = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -88,7 +88,7 @@ async fn custom_entry_fields_survive_put_get_round_trip() {
 
     let put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -101,7 +101,7 @@ async fn custom_entry_fields_survive_put_get_round_trip() {
 
     let get = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -131,7 +131,7 @@ async fn deleted_entries_do_not_reappear_after_merge_on_read() {
 
     let initial_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -144,7 +144,7 @@ async fn deleted_entries_do_not_reappear_after_merge_on_read() {
 
     let bob_initial_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -165,7 +165,7 @@ async fn deleted_entries_do_not_reappear_after_merge_on_read() {
 
     let delete_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -178,7 +178,7 @@ async fn deleted_entries_do_not_reappear_after_merge_on_read() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -206,7 +206,7 @@ async fn modified_entries_are_visible_to_other_clients_after_merge_on_read() {
     let base_db = sample_db("Modification DB", "Shared Entry");
     let initial_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -219,7 +219,7 @@ async fn modified_entries_are_visible_to_other_clients_after_merge_on_read() {
 
     let bob_initial_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -241,7 +241,7 @@ async fn modified_entries_are_visible_to_other_clients_after_merge_on_read() {
 
     let update_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -254,7 +254,7 @@ async fn modified_entries_are_visible_to_other_clients_after_merge_on_read() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -292,7 +292,7 @@ async fn conflicting_same_uuid_edits_merge_deterministically() {
     let base_db = sample_db("Conflict DB", "Shared Entry");
     let initial_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -305,7 +305,7 @@ async fn conflicting_same_uuid_edits_merge_deterministically() {
 
     let bob_seed_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -325,7 +325,7 @@ async fn conflicting_same_uuid_edits_merge_deterministically() {
 
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -344,7 +344,7 @@ async fn conflicting_same_uuid_edits_merge_deterministically() {
 
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -357,7 +357,7 @@ async fn conflicting_same_uuid_edits_merge_deterministically() {
 
     let alice_get = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -432,7 +432,7 @@ async fn database_name_metadata_survives_put_get_round_trip() {
 
     let put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -445,7 +445,7 @@ async fn database_name_metadata_survives_put_get_round_trip() {
 
     let get = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),

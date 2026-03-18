@@ -24,12 +24,10 @@ password = "correct horse battery staple"
 
 [[clients]]
 id = "laptop"
-username = "laptop"
 password = "laptop-webdav-password"
 
 [[clients]]
 id = "phone"
-username = "phone"
 password = "phone-webdav-password"
 ```
 
@@ -45,7 +43,6 @@ Create a separate client config for each `sync-local` instance:
 ```toml
 server_url = "http://127.0.0.1:8080"
 client_id = "laptop"
-username = "laptop"
 password = "laptop-webdav-password"
 ```
 
@@ -86,7 +83,7 @@ cargo run -p kdbx-git-sync-local -- --config client.toml --once ./laptop.kdbx
 Point each client at its own WebDAV file:
 
 - URL: `http://HOST:8080/dav/<client-id>/database.kdbx`
-- username: the matching client `username`
+- username: the client `id`
 - password: the matching client `password`
 
 The database's master password/key file is still the KDBX master credential from the server config's `[database]` section.

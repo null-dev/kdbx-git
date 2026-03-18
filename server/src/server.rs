@@ -490,7 +490,7 @@ async fn auth_middleware(State(state): State<AppState>, mut req: Request, next: 
         .config
         .clients
         .iter()
-        .any(|c| c.id == client_id && c.username == username && c.password == password);
+        .any(|c| c.id == client_id && c.id == username && c.password == password);
 
     if found {
         req.extensions_mut().insert(AuthedClientId(client_id));

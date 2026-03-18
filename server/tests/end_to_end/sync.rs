@@ -10,7 +10,7 @@ async fn concurrent_puts_from_two_clients_are_serialized_in_main_history() {
     let base_db = sample_db("Shared Base", "Base Entry");
     let seed_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -23,7 +23,7 @@ async fn concurrent_puts_from_two_clients_are_serialized_in_main_history() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -52,7 +52,7 @@ async fn concurrent_puts_from_two_clients_are_serialized_in_main_history() {
 
     let alice_request = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -60,7 +60,7 @@ async fn concurrent_puts_from_two_clients_are_serialized_in_main_history() {
     .body(build_kdbx_bytes(&alice_db, &config.database));
     let bob_request = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -91,7 +91,7 @@ async fn concurrent_puts_from_two_clients_are_serialized_in_main_history() {
 
     let alice_get = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -109,7 +109,7 @@ async fn concurrent_puts_from_two_clients_are_serialized_in_main_history() {
 
     let bob_get_after = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -136,7 +136,7 @@ async fn three_clients_writes_converge_for_all_clients() {
     let alice_db = sample_db("Shared DB", "Alice Entry");
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -149,7 +149,7 @@ async fn three_clients_writes_converge_for_all_clients() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -168,7 +168,7 @@ async fn three_clients_writes_converge_for_all_clients() {
     );
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -181,7 +181,7 @@ async fn three_clients_writes_converge_for_all_clients() {
 
     let carol_get = authed(
         &client,
-        "carol-user",
+        "carol",
         "carol-pass",
         reqwest::Method::GET,
         &format!("{}/dav/carol/database.kdbx", server.base_url),
@@ -200,7 +200,7 @@ async fn three_clients_writes_converge_for_all_clients() {
     );
     let carol_put = authed(
         &client,
-        "carol-user",
+        "carol",
         "carol-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/carol/database.kdbx", server.base_url),
@@ -212,9 +212,9 @@ async fn three_clients_writes_converge_for_all_clients() {
     assert!(carol_put.status().is_success());
 
     for (client_id, username, password) in [
-        ("alice", "alice-user", "alice-pass"),
-        ("bob", "bob-user", "bob-pass"),
-        ("carol", "carol-user", "carol-pass"),
+        ("alice", "alice", "alice-pass"),
+        ("bob", "bob", "bob-pass"),
+        ("carol", "carol", "carol-pass"),
     ] {
         let get = authed(
             &client,
@@ -247,7 +247,7 @@ async fn sync_merge_from_main_returns_no_content_when_client_branch_already_cont
     let alice_db = sample_db("Alice DB", "Alice Entry");
     let put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -258,14 +258,8 @@ async fn sync_merge_from_main_returns_no_content_when_client_branch_already_cont
     .unwrap();
     assert!(put.status().is_success());
 
-    let response = post_sync_merge_from_main(
-        &client,
-        "alice-user",
-        "alice-pass",
-        &server.base_url,
-        "alice",
-    )
-    .await;
+    let response =
+        post_sync_merge_from_main(&client, "alice", "alice-pass", &server.base_url, "alice").await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(response.headers().get("X-Merge-Commit-Id").is_none());
     assert!(response.headers().get("X-Expected-Branch-Tip").is_none());
@@ -283,7 +277,7 @@ async fn sync_merge_from_main_returns_kdbx_and_headers_when_merge_is_needed() {
     let alice_db = sample_db("Shared DB", "Alice Entry");
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -296,7 +290,7 @@ async fn sync_merge_from_main_returns_kdbx_and_headers_when_merge_is_needed() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -315,7 +309,7 @@ async fn sync_merge_from_main_returns_kdbx_and_headers_when_merge_is_needed() {
     );
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -328,14 +322,9 @@ async fn sync_merge_from_main_returns_kdbx_and_headers_when_merge_is_needed() {
 
     let alice_tip_before = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
 
-    let merge = post_sync_merge_from_main_ok(
-        &client,
-        "alice-user",
-        "alice-pass",
-        &server.base_url,
-        "alice",
-    )
-    .await;
+    let merge =
+        post_sync_merge_from_main_ok(&client, "alice", "alice-pass", &server.base_url, "alice")
+            .await;
     assert!(!merge.commit_id.is_empty());
     assert_eq!(merge.expected_tip, alice_tip_before.to_hex().to_string());
 
@@ -352,14 +341,8 @@ async fn sync_merge_from_main_returns_no_content_when_main_does_not_exist() {
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
 
-    let response = post_sync_merge_from_main(
-        &client,
-        "alice-user",
-        "alice-pass",
-        &server.base_url,
-        "alice",
-    )
-    .await;
+    let response =
+        post_sync_merge_from_main(&client, "alice", "alice-pass", &server.base_url, "alice").await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(response.bytes().await.unwrap().is_empty());
 }
@@ -375,7 +358,7 @@ async fn sync_merge_from_main_returns_main_content_and_none_expected_tip_for_new
     let bob_db = sample_db("Bob DB", "Bob Entry");
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -389,14 +372,9 @@ async fn sync_merge_from_main_returns_main_content_and_none_expected_tip_for_new
     let main_tip = store.branch_tip_id("main".into()).await.unwrap().unwrap();
     assert!(store.branch_tip_id("alice".into()).await.unwrap().is_none());
 
-    let merge = post_sync_merge_from_main_ok(
-        &client,
-        "alice-user",
-        "alice-pass",
-        &server.base_url,
-        "alice",
-    )
-    .await;
+    let merge =
+        post_sync_merge_from_main_ok(&client, "alice", "alice-pass", &server.base_url, "alice")
+            .await;
     assert_eq!(merge.expected_tip, "none");
     assert_eq!(merge.commit_id, main_tip.to_hex().to_string());
     let parsed = parse_kdbx_bytes(&merge.body, &config.database);
@@ -415,7 +393,7 @@ async fn sync_promote_merge_with_none_expected_tip_creates_client_branch() {
     let bob_db = sample_db("Bob DB", "Bob Entry");
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -426,19 +404,14 @@ async fn sync_promote_merge_with_none_expected_tip_creates_client_branch() {
     .unwrap();
     assert!(bob_put.status().is_success());
 
-    let merge = post_sync_merge_from_main_ok(
-        &client,
-        "alice-user",
-        "alice-pass",
-        &server.base_url,
-        "alice",
-    )
-    .await;
+    let merge =
+        post_sync_merge_from_main_ok(&client, "alice", "alice-pass", &server.base_url, "alice")
+            .await;
     assert_eq!(merge.expected_tip, "none");
 
     let promote = post_sync_promote_merge(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         &server.base_url,
         "alice",
@@ -453,7 +426,7 @@ async fn sync_promote_merge_with_none_expected_tip_creates_client_branch() {
 
     let alice_get = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -477,7 +450,7 @@ async fn sync_promote_merge_advances_client_branch_when_expected_tip_matches() {
     let alice_db = sample_db("Shared DB", "Alice Entry");
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -490,7 +463,7 @@ async fn sync_promote_merge_advances_client_branch_when_expected_tip_matches() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -509,7 +482,7 @@ async fn sync_promote_merge_advances_client_branch_when_expected_tip_matches() {
     );
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -520,19 +493,14 @@ async fn sync_promote_merge_advances_client_branch_when_expected_tip_matches() {
     .unwrap();
     assert!(bob_put.status().is_success());
 
-    let merge = post_sync_merge_from_main_ok(
-        &client,
-        "alice-user",
-        "alice-pass",
-        &server.base_url,
-        "alice",
-    )
-    .await;
+    let merge =
+        post_sync_merge_from_main_ok(&client, "alice", "alice-pass", &server.base_url, "alice")
+            .await;
     assert_ne!(merge.expected_tip, "none");
 
     let promote = post_sync_promote_merge(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         &server.base_url,
         "alice",
@@ -545,14 +513,8 @@ async fn sync_promote_merge_advances_client_branch_when_expected_tip_matches() {
     let alice_tip = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
     assert_eq!(alice_tip.to_hex().to_string(), merge.commit_id);
 
-    let reconcile = post_sync_merge_from_main(
-        &client,
-        "alice-user",
-        "alice-pass",
-        &server.base_url,
-        "alice",
-    )
-    .await;
+    let reconcile =
+        post_sync_merge_from_main(&client, "alice", "alice-pass", &server.base_url, "alice").await;
     assert_eq!(reconcile.status(), StatusCode::NO_CONTENT);
 }
 
@@ -566,7 +528,7 @@ async fn sync_promote_merge_returns_conflict_when_branch_tip_changes() {
     let mut alice_db = sample_db("Shared DB", "Alice Entry");
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -579,7 +541,7 @@ async fn sync_promote_merge_returns_conflict_when_branch_tip_changes() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -598,7 +560,7 @@ async fn sync_promote_merge_returns_conflict_when_branch_tip_changes() {
     );
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -609,14 +571,9 @@ async fn sync_promote_merge_returns_conflict_when_branch_tip_changes() {
     .unwrap();
     assert!(bob_put.status().is_success());
 
-    let merge = post_sync_merge_from_main_ok(
-        &client,
-        "alice-user",
-        "alice-pass",
-        &server.base_url,
-        "alice",
-    )
-    .await;
+    let merge =
+        post_sync_merge_from_main_ok(&client, "alice", "alice-pass", &server.base_url, "alice")
+            .await;
 
     add_entry(
         &mut alice_db,
@@ -627,7 +584,7 @@ async fn sync_promote_merge_returns_conflict_when_branch_tip_changes() {
     );
     let alice_rewrite = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -640,7 +597,7 @@ async fn sync_promote_merge_returns_conflict_when_branch_tip_changes() {
 
     let promote = post_sync_promote_merge(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         &server.base_url,
         "alice",
@@ -660,7 +617,7 @@ async fn sync_promote_merge_rejects_bad_commit_hex() {
 
     let response = post_sync_promote_merge(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         &server.base_url,
         "alice",
@@ -681,7 +638,7 @@ async fn sync_promote_merge_rejects_bad_expected_tip_hex() {
     let bob_db = sample_db("Bob DB", "Bob Entry");
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -692,18 +649,13 @@ async fn sync_promote_merge_rejects_bad_expected_tip_hex() {
     .unwrap();
     assert!(bob_put.status().is_success());
 
-    let merge = post_sync_merge_from_main_ok(
-        &client,
-        "alice-user",
-        "alice-pass",
-        &server.base_url,
-        "alice",
-    )
-    .await;
+    let merge =
+        post_sync_merge_from_main_ok(&client, "alice", "alice-pass", &server.base_url, "alice")
+            .await;
 
     let response = post_sync_promote_merge(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         &server.base_url,
         "alice",
@@ -723,7 +675,7 @@ async fn sync_events_stream_emits_branch_updated_when_main_advances() {
 
     let (sse_handle, mut sse_events) = spawn_sse_listener(
         client.clone(),
-        "alice-user",
+        "alice",
         "alice-pass",
         format!("{}/sync/alice/events", server.base_url),
     );
@@ -737,7 +689,7 @@ async fn sync_events_stream_emits_branch_updated_when_main_advances() {
     let bob_db = sample_db("Bob DB", "Bob Entry");
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -767,7 +719,7 @@ async fn sync_events_stream_sends_ready_immediately() {
 
     let (sse_handle, mut sse_events) = spawn_sse_listener(
         client,
-        "alice-user",
+        "alice",
         "alice-pass",
         format!("{}/sync/alice/events", server.base_url),
     );
@@ -792,7 +744,7 @@ async fn get_after_sync_promote_still_returns_correct_merged_content() {
     let alice_db = sample_db("Shared DB", "Alice Entry");
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -805,7 +757,7 @@ async fn get_after_sync_promote_still_returns_correct_merged_content() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -824,7 +776,7 @@ async fn get_after_sync_promote_still_returns_correct_merged_content() {
     );
     let bob_put = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -835,17 +787,12 @@ async fn get_after_sync_promote_still_returns_correct_merged_content() {
     .unwrap();
     assert!(bob_put.status().is_success());
 
-    let merge = post_sync_merge_from_main_ok(
-        &client,
-        "alice-user",
-        "alice-pass",
-        &server.base_url,
-        "alice",
-    )
-    .await;
+    let merge =
+        post_sync_merge_from_main_ok(&client, "alice", "alice-pass", &server.base_url, "alice")
+            .await;
     let promote = post_sync_promote_merge(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         &server.base_url,
         "alice",
@@ -857,7 +804,7 @@ async fn get_after_sync_promote_still_returns_correct_merged_content() {
 
     let alice_get = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::GET,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -885,7 +832,7 @@ async fn sync_merge_from_main_catches_up_branch_far_behind_main_in_one_call() {
     let alice_db = sample_db("Shared DB", "Alice Entry");
     let alice_put = authed(
         &client,
-        "alice-user",
+        "alice",
         "alice-pass",
         reqwest::Method::PUT,
         &format!("{}/dav/alice/database.kdbx", server.base_url),
@@ -900,7 +847,7 @@ async fn sync_merge_from_main_catches_up_branch_far_behind_main_in_one_call() {
 
     let bob_get = authed(
         &client,
-        "bob-user",
+        "bob",
         "bob-pass",
         reqwest::Method::GET,
         &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -921,7 +868,7 @@ async fn sync_merge_from_main_catches_up_branch_far_behind_main_in_one_call() {
         );
         let bob_put = authed(
             &client,
-            "bob-user",
+            "bob",
             "bob-pass",
             reqwest::Method::PUT,
             &format!("{}/dav/bob/database.kdbx", server.base_url),
@@ -933,14 +880,9 @@ async fn sync_merge_from_main_catches_up_branch_far_behind_main_in_one_call() {
         assert!(bob_put.status().is_success());
     }
 
-    let merge = post_sync_merge_from_main_ok(
-        &client,
-        "alice-user",
-        "alice-pass",
-        &server.base_url,
-        "alice",
-    )
-    .await;
+    let merge =
+        post_sync_merge_from_main_ok(&client, "alice", "alice-pass", &server.base_url, "alice")
+            .await;
     assert_eq!(merge.expected_tip, alice_tip_before.to_hex().to_string());
 
     let parsed = parse_kdbx_bytes(&merge.body, &config.database);

@@ -6,10 +6,8 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     /// Base URL of the running kdbx-git server.
     pub server_url: String,
-    /// The client branch and sync endpoint to use.
+    /// The client branch, sync endpoint, and HTTP username (same as the client ID).
     pub client_id: String,
-    /// HTTP Basic Auth username for this client's WebDAV endpoint.
-    pub username: String,
     /// HTTP Basic Auth password for this client's WebDAV endpoint.
     pub password: String,
 }

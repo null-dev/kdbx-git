@@ -140,7 +140,7 @@ async fn run_sync_local(
     let remote_task = tokio::spawn(run_remote_event_listener(
         syncer.http.clone(),
         syncer.events_url(),
-        syncer.config.username.clone(),
+        syncer.config.client_id.clone(),
         syncer.config.password.clone(),
         tx.clone(),
     ));
@@ -402,7 +402,7 @@ impl RemoteSyncer {
         let response = self
             .http
             .put(self.dav_url())
-            .basic_auth(&self.config.username, Some(&self.config.password))
+            .basic_auth(&self.config.client_id, Some(&self.config.password))
             .body(bytes)
             .send()
             .await
@@ -428,7 +428,7 @@ impl RemoteSyncer {
         let response = self
             .http
             .post(self.merge_from_main_url())
-            .basic_auth(&self.config.username, Some(&self.config.password))
+            .basic_auth(&self.config.client_id, Some(&self.config.password))
             .send()
             .await
             .wrap_err("failed to contact merge-from-main endpoint")?;
@@ -508,7 +508,7 @@ impl RemoteSyncer {
         let response = self
             .http
             .post(url)
-            .basic_auth(&self.config.username, Some(&self.config.password))
+            .basic_auth(&self.config.client_id, Some(&self.config.password))
             .send()
             .await
             .wrap_err("failed to contact promote-merge endpoint")?;
@@ -642,14 +642,14 @@ async fn local_poll_fingerprint(local_path: &Path) -> LocalPollFingerprint {
 async fn run_remote_event_listener(
     http: Client,
     events_url: String,
-    username: String,
+    auth_username: String,
     password: String,
     tx: mpsc::UnboundedSender<SyncTrigger>,
 ) {
     loop {
         let request = http
             .get(&events_url)
-            .basic_auth(&username, Some(&password))
+            .basic_auth(&auth_username, Some(&password))
             .header(header::ACCEPT, "text/event-stream");
 
         match request.send().await {

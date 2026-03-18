@@ -95,9 +95,13 @@ impl PushDelivery for ReqwestPushDelivery {
 
             let request = request_builder::build_request::<Vec<u8>>(message);
             let uri = request.uri().to_string();
+            let has_content_length = request.headers().contains_key("content-length");
             let mut reqwest_request = self.client.post(uri);
             for (name, value) in request.headers() {
                 reqwest_request = reqwest_request.header(name.as_str(), value.as_bytes());
+            }
+            if !has_content_length {
+                reqwest_request = reqwest_request.header("content-length", "0");
             }
 
             match timeout(
@@ -201,11 +205,16 @@ mod tests {
     use chrono::TimeZone;
     use http::StatusCode;
     use tempfile::TempDir;
-    use tokio::sync::Mutex;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        sync::Mutex,
+    };
 
     use crate::{
         config::{Config, DatabaseCredentials},
         store::GitStore,
+        sync_state::SyncStateStore,
     };
 
     use super::*;
@@ -308,5 +317,40 @@ mod tests {
         };
         assert_eq!(loaded.push_endpoints.len(), 1);
         assert!(loaded.push_endpoints.contains_key("alice"));
+    }
+
+    #[tokio::test]
+    async fn empty_push_request_sends_content_length_zero() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0_u8; 4096];
+            let bytes_read = stream.read(&mut buffer).await.unwrap();
+            let request = String::from_utf8(buffer[..bytes_read].to_vec()).unwrap();
+
+            stream
+                .write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+
+            request
+        });
+
+        let tempdir = TempDir::new().unwrap();
+        let vapid = SyncStateStore::new(tempdir.path().join("sync-state.json"))
+            .ensure_vapid_keys()
+            .unwrap();
+
+        let delivery = ReqwestPushDelivery::new();
+        let endpoint = format!("http://{address}/push");
+        let result = delivery.post_branch_updated(&endpoint, &vapid).await;
+
+        assert!(matches!(result, PushDeliveryResult::Delivered));
+
+        let request = server.await.unwrap();
+        assert!(request.starts_with("POST /push HTTP/1.1\r\n"));
+        assert!(request.contains("\r\nContent-Length: 0\r\n"));
     }
 }

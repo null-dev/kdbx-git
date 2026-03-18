@@ -286,7 +286,10 @@ pub(super) async fn register_push_endpoint_handler(
     }
 
     match state.upsert_push_endpoint(&client_id, subscription).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            info!("registered push endpoint for '{}'", client_id);
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(err) => {
             warn!(
                 "push register endpoint: failed for '{}': {err:#}",

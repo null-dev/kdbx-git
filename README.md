@@ -36,7 +36,7 @@ Notes:
 
 - `database.password` / `database.keyfile` are the master credentials used to decrypt uploads and re-encrypt downloads.
 - `git_store` is a bare repo, so inspect it with commands like `git --git-dir ./store.git log --stat main`.
-- the server also keeps `sync-state.json` next to `git_store` to persist registered UnifiedPush endpoints and the server's generated VAPID keypair for instant mobile sync
+- the server also keeps `sync-state.json` next to `git_store` to persist registered UnifiedPush subscriptions and the server's generated VAPID keypair for instant mobile sync
 
 ## Sync-Local Client Configuration
 
@@ -95,7 +95,18 @@ The database's master password/key file is still the KDBX master credential from
 Mobile clients can register a UnifiedPush endpoint with the server:
 
 - `GET /push/<client-id>/vapid-public-key` to fetch the server's VAPID public key
-- `POST /push/<client-id>/endpoint` with JSON body `{"endpoint":"https://..."}`
+- `POST /push/<client-id>/endpoint` with the full Web Push subscription JSON:
+
+```json
+{
+  "endpoint": "https://push.example/...",
+  "keys": {
+    "p256dh": "...",
+    "auth": "..."
+  }
+}
+```
+
 - `DELETE /push/<client-id>/endpoint` to unregister
 
 These endpoints use the same HTTP Basic credentials as WebDAV:
@@ -104,8 +115,8 @@ These endpoints use the same HTTP Basic credentials as WebDAV:
 - password: the matching client `password`
 
 After a successful write that advances `main`, the server sends a best-effort VAPID-signed
-web push wakeup request to every registered endpoint URL. Delivery runs in the background
-with a short timeout, so the uploading client does not wait for push fan-out.
+and encrypted web push payload to every registered subscription. Delivery runs in the
+background with a short timeout, so the uploading client does not wait for push fan-out.
 
 Endpoint registrations are stored in `sync-state.json`, pruned if they have not been
 refreshed for 14 days, and removed automatically if the push provider responds with `404`

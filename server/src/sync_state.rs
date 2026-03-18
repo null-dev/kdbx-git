@@ -10,7 +10,7 @@ use chrono::{DateTime, Duration, Utc};
 use eyre::{Context, Result};
 use jwt_simple::prelude::ES256KeyPair;
 use serde::{Deserialize, Serialize};
-use web_push::VapidSignatureBuilder;
+use web_push::{SubscriptionInfo, SubscriptionKeys, VapidSignatureBuilder};
 
 const SYNC_STATE_FILE_NAME: &str = "sync-state.json";
 const TEMP_FILE_SUFFIX: &str = ".tmp";
@@ -19,7 +19,21 @@ const PUSH_ENDPOINT_TTL_DAYS: i64 = 14;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PushEndpointRecord {
     pub endpoint: String,
+    pub keys: SubscriptionKeys,
     pub last_seen_at: DateTime<Utc>,
+}
+
+impl PushEndpointRecord {
+    pub(crate) fn subscription_info(&self) -> SubscriptionInfo {
+        SubscriptionInfo {
+            endpoint: self.endpoint.clone(),
+            keys: self.keys.clone(),
+        }
+    }
+
+    fn matches_subscription(&self, subscription: &SubscriptionInfo) -> bool {
+        self.endpoint == subscription.endpoint && self.keys == subscription.keys
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,7 +55,7 @@ impl SyncState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RevokedPushEndpoint {
     pub client_id: String,
-    pub endpoint: String,
+    pub subscription: SubscriptionInfo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,7 +103,7 @@ impl SyncStateStore {
     pub(crate) fn upsert_push_endpoint(
         &self,
         client_id: &str,
-        endpoint: String,
+        subscription: SubscriptionInfo,
         now: DateTime<Utc>,
     ) -> Result<()> {
         let mut state = self.load()?;
@@ -97,7 +111,8 @@ impl SyncStateStore {
         state.push_endpoints.insert(
             client_id.to_string(),
             PushEndpointRecord {
-                endpoint,
+                endpoint: subscription.endpoint,
+                keys: subscription.keys,
                 last_seen_at: now,
             },
         );
@@ -127,7 +142,7 @@ impl SyncStateStore {
             let should_remove = state
                 .push_endpoints
                 .get(&revoked_entry.client_id)
-                .map(|current| current.endpoint == revoked_entry.endpoint)
+                .map(|current| current.matches_subscription(&revoked_entry.subscription))
                 .unwrap_or(false);
 
             if should_remove {
@@ -211,6 +226,18 @@ mod tests {
     use chrono::TimeZone;
     use tempfile::TempDir;
 
+    fn sample_subscription(endpoint: &str) -> SubscriptionInfo {
+        SubscriptionInfo {
+            endpoint: endpoint.into(),
+            keys: SubscriptionKeys {
+                p256dh:
+                    "BGa4N1PI79lboMR_YrwCiCsgp35DRvedt7opHcf0yM3iOBTSoQYqQLwWxAfRKE6tsDnReWmhsImkhDF_DBdkNSU"
+                        .into(),
+                auth: "EvcWjEgzr4rbvhfi3yds0A".into(),
+            },
+        }
+    }
+
     #[test]
     fn save_prunes_expired_entries_and_keeps_recent_ones() {
         let tempdir = TempDir::new().unwrap();
@@ -222,6 +249,7 @@ mod tests {
             "expired".into(),
             PushEndpointRecord {
                 endpoint: "https://push.example/expired".into(),
+                keys: sample_subscription("https://push.example/expired").keys,
                 last_seen_at: now - Duration::days(15),
             },
         );
@@ -229,6 +257,7 @@ mod tests {
             "fresh".into(),
             PushEndpointRecord {
                 endpoint: "https://push.example/fresh".into(),
+                keys: sample_subscription("https://push.example/fresh").keys,
                 last_seen_at: now - Duration::days(3),
             },
         );
@@ -250,17 +279,25 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 3, 18, 12, 0, 0).unwrap();
 
         store
-            .upsert_push_endpoint("alice", "https://push.example/old".into(), now)
+            .upsert_push_endpoint(
+                "alice",
+                sample_subscription("https://push.example/old"),
+                now,
+            )
             .unwrap();
         store
-            .upsert_push_endpoint("alice", "https://push.example/new".into(), now)
+            .upsert_push_endpoint(
+                "alice",
+                sample_subscription("https://push.example/new"),
+                now,
+            )
             .unwrap();
 
         store
             .remove_revoked_push_endpoints(
                 &[RevokedPushEndpoint {
                     client_id: "alice".into(),
-                    endpoint: "https://push.example/old".into(),
+                    subscription: sample_subscription("https://push.example/old"),
                 }],
                 now,
             )
@@ -281,7 +318,11 @@ mod tests {
         let now = Utc.with_ymd_and_hms(2026, 3, 18, 12, 0, 0).unwrap();
 
         store
-            .upsert_push_endpoint("alice", "https://push.example/alice".into(), now)
+            .upsert_push_endpoint(
+                "alice",
+                sample_subscription("https://push.example/alice"),
+                now,
+            )
             .unwrap();
 
         assert!(store.path().exists());

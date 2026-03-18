@@ -17,6 +17,7 @@ struct PushStateVapid {
 #[derive(Debug, Deserialize)]
 struct PushEndpointFileEntry {
     endpoint: String,
+    keys: PushSubscriptionKeys,
     last_seen_at: String,
 }
 
@@ -26,8 +27,24 @@ fn read_push_state(path: &Path) -> PushStateFile {
 }
 
 #[derive(Debug, Deserialize)]
+struct PushSubscriptionKeys {
+    p256dh: String,
+    auth: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct VapidPublicKeyResponse {
     public_key: String,
+}
+
+fn sample_subscription_payload(endpoint: &str) -> serde_json::Value {
+    serde_json::json!({
+        "endpoint": endpoint,
+        "keys": {
+            "p256dh": "BGa4N1PI79lboMR_YrwCiCsgp35DRvedt7opHcf0yM3iOBTSoQYqQLwWxAfRKE6tsDnReWmhsImkhDF_DBdkNSU",
+            "auth": "EvcWjEgzr4rbvhfi3yds0A"
+        }
+    })
 }
 
 #[tokio::test]
@@ -105,9 +122,7 @@ async fn register_push_endpoint_persists_endpoint_and_updates_timestamp() {
         reqwest::Method::POST,
         &format!("{}/push/alice/endpoint", server.base_url),
     )
-    .json(&serde_json::json!({
-        "endpoint": "https://push.example/alice-1"
-    }))
+    .json(&sample_subscription_payload("https://push.example/alice-1"))
     .send()
     .await
     .unwrap();
@@ -117,6 +132,8 @@ async fn register_push_endpoint_persists_endpoint_and_updates_timestamp() {
     assert!(state.vapid.is_some());
     let alice = state.push_endpoints.get("alice").unwrap();
     assert_eq!(alice.endpoint, "https://push.example/alice-1");
+    assert!(!alice.keys.p256dh.is_empty());
+    assert!(!alice.keys.auth.is_empty());
     assert!(!alice.last_seen_at.is_empty());
 }
 
@@ -139,7 +156,7 @@ async fn register_push_endpoint_replaces_existing_endpoint() {
             reqwest::Method::POST,
             &format!("{}/push/alice/endpoint", server.base_url),
         )
-        .json(&serde_json::json!({ "endpoint": endpoint }))
+        .json(&sample_subscription_payload(endpoint))
         .send()
         .await
         .unwrap();
@@ -152,6 +169,7 @@ async fn register_push_endpoint_replaces_existing_endpoint() {
         state.push_endpoints["alice"].endpoint,
         "https://push.example/alice-new"
     );
+    assert!(!state.push_endpoints["alice"].keys.p256dh.is_empty());
     assert!(state.vapid.is_some());
 }
 
@@ -170,9 +188,7 @@ async fn delete_push_endpoint_is_idempotent() {
         reqwest::Method::POST,
         &format!("{}/push/alice/endpoint", server.base_url),
     )
-    .json(&serde_json::json!({
-        "endpoint": "https://push.example/alice"
-    }))
+    .json(&sample_subscription_payload("https://push.example/alice"))
     .send()
     .await
     .unwrap();
@@ -211,9 +227,7 @@ async fn register_push_endpoint_requires_matching_basic_auth_identity() {
         reqwest::Method::POST,
         &format!("{}/push/alice/endpoint", server.base_url),
     )
-    .json(&serde_json::json!({
-        "endpoint": "https://push.example/alice"
-    }))
+    .json(&sample_subscription_payload("https://push.example/alice"))
     .send()
     .await
     .unwrap();
@@ -240,12 +254,40 @@ async fn register_push_endpoint_rejects_non_https_urls() {
             reqwest::Method::POST,
             &format!("{}/push/alice/endpoint", server.base_url),
         )
-        .json(&serde_json::json!({ "endpoint": endpoint }))
+        .json(&sample_subscription_payload(endpoint))
         .send()
         .await
         .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
+
+    let state = read_push_state(&sync_state_path);
+    assert!(state.vapid.is_some());
+    assert!(state.push_endpoints.is_empty());
+}
+
+#[tokio::test]
+async fn register_push_endpoint_rejects_missing_subscription_keys() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path());
+    let sync_state_path = common::sync_state_path(&config);
+    let server = TestServer::start(config, tempdir).await.unwrap();
+    let client = Client::new();
+
+    let response = authed(
+        &client,
+        "alice",
+        "alice-pass",
+        reqwest::Method::POST,
+        &format!("{}/push/alice/endpoint", server.base_url),
+    )
+    .json(&serde_json::json!({
+        "endpoint": "https://push.example/alice"
+    }))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     let state = read_push_state(&sync_state_path);
     assert!(state.vapid.is_some());
@@ -263,6 +305,10 @@ async fn register_push_endpoint_prunes_expired_entries_on_write() {
             "push_endpoints": {
                 "stale-client": {
                     "endpoint": "https://push.example/stale",
+                    "keys": {
+                        "p256dh": "BGa4N1PI79lboMR_YrwCiCsgp35DRvedt7opHcf0yM3iOBTSoQYqQLwWxAfRKE6tsDnReWmhsImkhDF_DBdkNSU",
+                        "auth": "EvcWjEgzr4rbvhfi3yds0A"
+                    },
                     "last_seen_at": "2026-03-01T00:00:00Z"
                 }
             }
@@ -281,9 +327,7 @@ async fn register_push_endpoint_prunes_expired_entries_on_write() {
         reqwest::Method::POST,
         &format!("{}/push/alice/endpoint", server.base_url),
     )
-    .json(&serde_json::json!({
-        "endpoint": "https://push.example/alice"
-    }))
+    .json(&sample_subscription_payload("https://push.example/alice"))
     .send()
     .await
     .unwrap();

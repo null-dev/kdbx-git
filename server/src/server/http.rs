@@ -19,6 +19,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::task::spawn_blocking;
 use tracing::{info, warn};
+use web_push::{ContentEncoding, SubscriptionInfo, SubscriptionKeys, WebPushMessageBuilder};
 
 use crate::{
     config::Config,
@@ -221,11 +222,36 @@ pub(super) async fn sync_promote_merge_handler(
 #[derive(Deserialize)]
 pub(super) struct RegisterPushEndpointRequest {
     endpoint: String,
+    #[serde(default)]
+    keys: RegisterPushEndpointKeys,
+}
+
+#[derive(Default, Deserialize)]
+pub(super) struct RegisterPushEndpointKeys {
+    p256dh: String,
+    auth: String,
 }
 
 #[derive(Serialize)]
 pub(super) struct VapidPublicKeyResponse {
     public_key: String,
+}
+
+const PUSH_NOTIFICATION_PAYLOAD: &[u8] = br#"{"event":"branch-updated"}"#;
+
+fn validate_push_subscription(subscription: &SubscriptionInfo) -> bool {
+    match Url::parse(&subscription.endpoint) {
+        Ok(url) if url.scheme() == "https" => {}
+        _ => return false,
+    }
+
+    if subscription.keys.p256dh.is_empty() || subscription.keys.auth.is_empty() {
+        return false;
+    }
+
+    let mut builder = WebPushMessageBuilder::new(subscription);
+    builder.set_payload(ContentEncoding::Aes128Gcm, PUSH_NOTIFICATION_PAYLOAD);
+    builder.build().is_ok()
 }
 
 pub(super) async fn get_vapid_public_key_handler(
@@ -247,15 +273,19 @@ pub(super) async fn register_push_endpoint_handler(
     Extension(AuthedClientId(client_id)): Extension<AuthedClientId>,
     Json(payload): Json<RegisterPushEndpointRequest>,
 ) -> impl IntoResponse {
-    match Url::parse(&payload.endpoint) {
-        Ok(url) if url.scheme() == "https" => {}
-        _ => return StatusCode::BAD_REQUEST.into_response(),
+    let subscription = SubscriptionInfo {
+        endpoint: payload.endpoint,
+        keys: SubscriptionKeys {
+            p256dh: payload.keys.p256dh,
+            auth: payload.keys.auth,
+        },
+    };
+
+    if !validate_push_subscription(&subscription) {
+        return StatusCode::BAD_REQUEST.into_response();
     }
 
-    match state
-        .upsert_push_endpoint(&client_id, payload.endpoint)
-        .await
-    {
+    match state.upsert_push_endpoint(&client_id, subscription).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(err) => {
             warn!(

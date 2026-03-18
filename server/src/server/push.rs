@@ -6,7 +6,8 @@ use reqwest::Client;
 use tokio::time::timeout;
 use tracing::warn;
 use web_push::{
-    request_builder, SubscriptionInfo, Urgency, VapidSignatureBuilder, WebPushMessageBuilder,
+    request_builder, ContentEncoding, SubscriptionInfo, Urgency, VapidSignatureBuilder,
+    WebPushMessageBuilder,
 };
 
 use crate::sync_state::{RevokedPushEndpoint, VapidKeys};
@@ -16,6 +17,7 @@ use super::state::AppState;
 const PUSH_DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const PUSH_DELIVERY_TTL_SECS: u32 = 30;
 const PUSH_TOPIC: &str = "branch-updated";
+const PUSH_NOTIFICATION_PAYLOAD: &[u8] = br#"{"event":"branch-updated"}"#;
 
 pub(super) type PushDeliveryFuture<'a> =
     Pin<Box<dyn Future<Output = PushDeliveryResult> + Send + 'a>>;
@@ -40,7 +42,7 @@ impl std::error::Error for PushDeliveryError {}
 pub(super) trait PushDelivery: Send + Sync {
     fn post_branch_updated<'a>(
         &'a self,
-        endpoint: &'a str,
+        subscription: &'a SubscriptionInfo,
         vapid: &'a VapidKeys,
     ) -> PushDeliveryFuture<'a>;
 }
@@ -64,13 +66,12 @@ impl ReqwestPushDelivery {
 impl PushDelivery for ReqwestPushDelivery {
     fn post_branch_updated<'a>(
         &'a self,
-        endpoint: &'a str,
+        subscription: &'a SubscriptionInfo,
         vapid: &'a VapidKeys,
     ) -> PushDeliveryFuture<'a> {
         Box::pin(async move {
-            let subscription_info = SubscriptionInfo::new(endpoint, "", "");
             let signature =
-                match VapidSignatureBuilder::from_base64(&vapid.private_key, &subscription_info) {
+                match VapidSignatureBuilder::from_base64(&vapid.private_key, subscription) {
                     Ok(builder) => match builder.build() {
                         Ok(signature) => signature,
                         Err(err) => {
@@ -82,11 +83,12 @@ impl PushDelivery for ReqwestPushDelivery {
                     }
                 };
 
-            let mut builder = WebPushMessageBuilder::new(&subscription_info);
+            let mut builder = WebPushMessageBuilder::new(subscription);
             builder.set_ttl(PUSH_DELIVERY_TTL_SECS);
             builder.set_urgency(Urgency::Low);
             builder.set_topic(PUSH_TOPIC.to_string());
             builder.set_vapid_signature(signature);
+            builder.set_payload(ContentEncoding::Aes128Gcm, PUSH_NOTIFICATION_PAYLOAD);
 
             let message = match builder.build() {
                 Ok(message) => message,
@@ -95,13 +97,9 @@ impl PushDelivery for ReqwestPushDelivery {
 
             let request = request_builder::build_request::<Vec<u8>>(message);
             let uri = request.uri().to_string();
-            let has_content_length = request.headers().contains_key("content-length");
             let mut reqwest_request = self.client.post(uri);
             for (name, value) in request.headers() {
                 reqwest_request = reqwest_request.header(name.as_str(), value.as_bytes());
-            }
-            if !has_content_length {
-                reqwest_request = reqwest_request.header("content-length", "0");
             }
 
             match timeout(
@@ -134,10 +132,10 @@ impl AppState {
     pub(crate) async fn upsert_push_endpoint(
         &self,
         client_id: &str,
-        endpoint: String,
+        subscription: SubscriptionInfo,
     ) -> Result<()> {
         let store = self.push_state.lock().await;
-        store.upsert_push_endpoint(client_id, endpoint, Utc::now())
+        store.upsert_push_endpoint(client_id, subscription, Utc::now())
     }
 
     pub(crate) async fn remove_push_endpoint(&self, client_id: &str) -> Result<()> {
@@ -145,13 +143,15 @@ impl AppState {
         store.remove_push_endpoint(client_id, Utc::now())
     }
 
-    pub(crate) async fn load_push_delivery_targets(&self) -> Result<Vec<(String, String)>> {
+    pub(crate) async fn load_push_delivery_targets(
+        &self,
+    ) -> Result<Vec<(String, SubscriptionInfo)>> {
         let store = self.push_state.lock().await;
         let state = store.load()?;
         Ok(state
             .push_endpoints
             .into_iter()
-            .map(|(client_id, entry)| (client_id, entry.endpoint))
+            .map(|(client_id, entry)| (client_id, entry.subscription_info()))
             .collect())
     }
 
@@ -170,21 +170,21 @@ impl AppState {
         }
 
         let mut revoked = Vec::new();
-        for (client_id, endpoint) in targets {
+        for (client_id, subscription) in targets {
             match self
                 .push_delivery
-                .post_branch_updated(&endpoint, &self.vapid_keys)
+                .post_branch_updated(&subscription, &self.vapid_keys)
                 .await
             {
                 PushDeliveryResult::Revoked => revoked.push(RevokedPushEndpoint {
                     client_id,
-                    endpoint,
+                    subscription,
                 }),
                 PushDeliveryResult::Delivered => {}
                 PushDeliveryResult::Failed(err) => {
                     warn!(
                         "push delivery to '{}' for client '{}' failed: {}",
-                        endpoint, client_id, err
+                        subscription.endpoint, client_id, err
                     );
                 }
             }
@@ -210,6 +210,7 @@ mod tests {
         net::TcpListener,
         sync::Mutex,
     };
+    use web_push::SubscriptionKeys;
 
     use crate::{
         config::{Config, DatabaseCredentials},
@@ -218,6 +219,18 @@ mod tests {
     };
 
     use super::*;
+
+    fn sample_subscription(endpoint: &str) -> SubscriptionInfo {
+        SubscriptionInfo {
+            endpoint: endpoint.into(),
+            keys: SubscriptionKeys {
+                p256dh:
+                    "BGa4N1PI79lboMR_YrwCiCsgp35DRvedt7opHcf0yM3iOBTSoQYqQLwWxAfRKE6tsDnReWmhsImkhDF_DBdkNSU"
+                        .into(),
+                auth: "EvcWjEgzr4rbvhfi3yds0A".into(),
+            },
+        }
+    }
 
     #[derive(Clone)]
     struct FakePushDelivery {
@@ -241,16 +254,16 @@ mod tests {
     impl PushDelivery for FakePushDelivery {
         fn post_branch_updated<'a>(
             &'a self,
-            endpoint: &'a str,
+            subscription: &'a SubscriptionInfo,
             _vapid: &'a VapidKeys,
         ) -> PushDeliveryFuture<'a> {
             Box::pin(async move {
-                self.hits.lock().await.push(endpoint.to_string());
+                self.hits.lock().await.push(subscription.endpoint.clone());
                 match self
                     .statuses
                     .lock()
                     .await
-                    .get(endpoint)
+                    .get(&subscription.endpoint)
                     .copied()
                     .unwrap_or(StatusCode::OK)
                 {
@@ -289,13 +302,21 @@ mod tests {
         {
             let push_state = state.push_state.lock().await;
             push_state
-                .upsert_push_endpoint("alice", "https://push.example/alice".into(), now)
+                .upsert_push_endpoint(
+                    "alice",
+                    sample_subscription("https://push.example/alice"),
+                    now,
+                )
                 .unwrap();
             push_state
-                .upsert_push_endpoint("bob", "https://push.example/bob".into(), now)
+                .upsert_push_endpoint("bob", sample_subscription("https://push.example/bob"), now)
                 .unwrap();
             push_state
-                .upsert_push_endpoint("carol", "https://push.example/carol".into(), now)
+                .upsert_push_endpoint(
+                    "carol",
+                    sample_subscription("https://push.example/carol"),
+                    now,
+                )
                 .unwrap();
         }
 
@@ -320,22 +341,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_push_request_sends_content_length_zero() {
+    async fn push_request_sends_encrypted_json_payload() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut buffer = vec![0_u8; 4096];
-            let bytes_read = stream.read(&mut buffer).await.unwrap();
-            let request = String::from_utf8(buffer[..bytes_read].to_vec()).unwrap();
+            let mut bytes_read = 0;
+            let header_end;
+
+            loop {
+                let read = stream.read(&mut buffer[bytes_read..]).await.unwrap();
+                bytes_read += read;
+                let request = &buffer[..bytes_read];
+                if let Some(offset) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                    header_end = offset + 4;
+                    break;
+                }
+            }
+
+            let headers = String::from_utf8(buffer[..header_end].to_vec()).unwrap();
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("content-length") {
+                        Some(value.trim().parse::<usize>().unwrap())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+
+            while bytes_read - header_end < content_length {
+                let read = stream.read(&mut buffer[bytes_read..]).await.unwrap();
+                bytes_read += read;
+            }
 
             stream
                 .write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n")
                 .await
                 .unwrap();
 
-            request
+            buffer[..bytes_read].to_vec()
         });
 
         let tempdir = TempDir::new().unwrap();
@@ -344,13 +393,25 @@ mod tests {
             .unwrap();
 
         let delivery = ReqwestPushDelivery::new();
-        let endpoint = format!("http://{address}/push");
-        let result = delivery.post_branch_updated(&endpoint, &vapid).await;
+        let subscription = sample_subscription(&format!("http://{address}/push"));
+        let result = delivery.post_branch_updated(&subscription, &vapid).await;
 
         assert!(matches!(result, PushDeliveryResult::Delivered));
 
         let request = server.await.unwrap();
-        assert!(request.starts_with("POST /push HTTP/1.1\r\n"));
-        assert!(request.contains("\r\nContent-Length: 0\r\n"));
+        let header_end = request
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        let headers = String::from_utf8(request[..header_end].to_vec()).unwrap();
+        let lower = headers.to_ascii_lowercase();
+        let body = &request[header_end..];
+
+        assert!(headers.starts_with("POST /push HTTP/1.1\r\n"));
+        assert!(lower.contains("\r\ncontent-type: application/octet-stream\r\n"));
+        assert!(lower.contains("\r\ncontent-encoding: aes128gcm\r\n"));
+        assert!(!lower.contains("\r\ncontent-length: 0\r\n"));
+        assert!(!body.is_empty());
     }
 }

@@ -22,20 +22,29 @@
 //! 4. **[`AppState`]** wraps [`GitStore`] in `Arc<tokio::sync::Mutex<...>>`
 //!    (step 8) so concurrent writes are serialised.
 
-use std::{collections::HashMap, convert::Infallible, io::SeekFrom, sync::Arc, time::SystemTime};
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    future::Future,
+    io::SeekFrom,
+    pin::Pin,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use axum::{
-    extract::{Path, Query, Request, State},
+    extract::{Json, Path, Query, Request, State},
     middleware::{self, Next},
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
     },
     routing::{any, get, post},
-    Router,
+    Extension, Router,
 };
 use base64::{engine::general_purpose::STANDARD as B64_STANDARD, Engine};
 use bytes::Bytes;
+use chrono::Utc;
 use dav_server::{
     fakels::FakeLs,
     fs::{
@@ -48,7 +57,8 @@ use eyre::{Context, Result};
 use futures_util::{stream, StreamExt};
 use gix::ObjectId;
 use http::{header, StatusCode};
-use serde::Deserialize;
+use reqwest::Url;
+use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{watch, Mutex},
     task::spawn_blocking,
@@ -59,7 +69,54 @@ use crate::{
     config::Config,
     kdbx::{build_kdbx_sync, parse_kdbx_sync},
     store::{BranchConflictError, GitStore, MAIN_BRANCH},
+    sync_state::{RevokedPushEndpoint, SyncStateStore},
 };
+
+const PUSH_DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
+
+type PushDeliveryFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<StatusCode, PushDeliveryError>> + Send + 'a>>;
+
+#[derive(Debug)]
+struct PushDeliveryError(String);
+
+impl std::fmt::Display for PushDeliveryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for PushDeliveryError {}
+
+trait PushDelivery: Send + Sync {
+    fn post_branch_updated<'a>(&'a self, endpoint: &'a str) -> PushDeliveryFuture<'a>;
+}
+
+#[derive(Clone)]
+struct ReqwestPushDelivery {
+    client: reqwest::Client,
+}
+
+#[derive(Serialize)]
+struct BranchUpdatedNotification<'a> {
+    event: &'a str,
+}
+
+impl PushDelivery for ReqwestPushDelivery {
+    fn post_branch_updated<'a>(&'a self, endpoint: &'a str) -> PushDeliveryFuture<'a> {
+        Box::pin(async move {
+            self.client
+                .post(endpoint)
+                .json(&BranchUpdatedNotification {
+                    event: "branch-updated",
+                })
+                .send()
+                .await
+                .map(|response| response.status())
+                .map_err(|err| PushDeliveryError(err.to_string()))
+        })
+    }
+}
 
 // ── AppState (step 8) ─────────────────────────────────────────────────────────
 
@@ -68,6 +125,8 @@ use crate::{
 pub struct AppState {
     pub store: Arc<Mutex<GitStore>>,
     pub config: Arc<Config>,
+    push_state: Arc<Mutex<SyncStateStore>>,
+    push_delivery: Arc<dyn PushDelivery>,
     /// Per-branch notification channels.  Includes an entry for `MAIN_BRANCH`
     /// so sync-local clients can be notified when main advances.
     branch_notifications: Arc<HashMap<String, watch::Sender<u64>>>,
@@ -75,6 +134,20 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: Config, store: GitStore) -> Self {
+        let push_delivery = ReqwestPushDelivery {
+            client: reqwest::Client::builder()
+                .timeout(PUSH_DELIVERY_TIMEOUT)
+                .build()
+                .expect("failed to build push delivery HTTP client"),
+        };
+        Self::new_with_push_delivery(config, store, Arc::new(push_delivery))
+    }
+
+    fn new_with_push_delivery(
+        config: Config,
+        store: GitStore,
+        push_delivery: Arc<dyn PushDelivery>,
+    ) -> Self {
         let mut branch_notifications: HashMap<String, watch::Sender<u64>> = config
             .clients
             .iter()
@@ -91,6 +164,8 @@ impl AppState {
 
         Self {
             store: Arc::new(Mutex::new(store)),
+            push_state: Arc::new(Mutex::new(SyncStateStore::for_git_store(&config.git_store))),
+            push_delivery,
             config: Arc::new(config),
             branch_notifications: Arc::new(branch_notifications),
         }
@@ -108,6 +183,67 @@ impl AppState {
                 tx.send_modify(|version| *version += 1);
             }
         }
+    }
+
+    async fn upsert_push_endpoint(&self, client_id: &str, endpoint: String) -> Result<()> {
+        let store = self.push_state.lock().await;
+        store.upsert_push_endpoint(client_id, endpoint, Utc::now())
+    }
+
+    async fn remove_push_endpoint(&self, client_id: &str) -> Result<()> {
+        let store = self.push_state.lock().await;
+        store.remove_push_endpoint(client_id, Utc::now())
+    }
+
+    async fn load_push_delivery_targets(&self) -> Result<Vec<(String, String)>> {
+        let store = self.push_state.lock().await;
+        let state = store.load()?;
+        Ok(state
+            .push_endpoints
+            .into_iter()
+            .map(|(client_id, entry)| (client_id, entry.endpoint))
+            .collect())
+    }
+
+    async fn remove_revoked_push_endpoints(&self, revoked: &[RevokedPushEndpoint]) -> Result<()> {
+        let store = self.push_state.lock().await;
+        store.remove_revoked_push_endpoints(revoked, Utc::now())
+    }
+
+    async fn dispatch_push_notifications(&self) -> Result<()> {
+        let targets = self.load_push_delivery_targets().await?;
+        if targets.is_empty() {
+            return Ok(());
+        }
+
+        let mut revoked = Vec::new();
+        for (client_id, endpoint) in targets {
+            match self.push_delivery.post_branch_updated(&endpoint).await {
+                Ok(StatusCode::NOT_FOUND | StatusCode::GONE) => revoked.push(RevokedPushEndpoint {
+                    client_id,
+                    endpoint,
+                }),
+                Ok(status) if status.is_success() => {}
+                Ok(status) => {
+                    warn!(
+                        "push delivery to '{}' for client '{}' returned {}",
+                        endpoint, client_id, status
+                    );
+                }
+                Err(err) => {
+                    warn!(
+                        "push delivery to '{}' for client '{}' failed: {}",
+                        endpoint, client_id, err
+                    );
+                }
+            }
+        }
+
+        if !revoked.is_empty() {
+            self.remove_revoked_push_endpoints(&revoked).await?;
+        }
+
+        Ok(())
     }
 }
 
@@ -289,7 +425,16 @@ impl DavFile for WriteFile {
                 .process_client_write(client_id.clone(), storage)
                 .await
                 .map(|updated_branches| {
+                    let main_advanced = updated_branches.iter().any(|branch| branch == MAIN_BRANCH);
                     state.notify_branches(updated_branches.iter());
+                    if main_advanced {
+                        let push_state = state.clone();
+                        tokio::spawn(async move {
+                            if let Err(err) = push_state.dispatch_push_notifications().await {
+                                warn!("push delivery task failed: {err:#}");
+                            }
+                        });
+                    }
                 })
                 .map_err(|e| {
                     warn!("Client '{}': git write failed: {e:#}", client_id);
@@ -501,12 +646,14 @@ async fn auth_middleware(State(state): State<AppState>, mut req: Request, next: 
 }
 
 fn extract_client_id_from_path(path: &str) -> Option<String> {
-    ["/dav/", "/sync/"].into_iter().find_map(|prefix| {
-        path.strip_prefix(prefix)
-            .and_then(|s| s.split('/').next())
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-    })
+    ["/dav/", "/sync/", "/push/"]
+        .into_iter()
+        .find_map(|prefix| {
+            path.strip_prefix(prefix)
+                .and_then(|s| s.split('/').next())
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        })
 }
 
 // ── WebDAV request handler ─────────────────────────────────────────────────────
@@ -726,6 +873,51 @@ async fn sync_promote_merge_handler(
     }
 }
 
+// ── Push endpoint registration ────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct RegisterPushEndpointRequest {
+    endpoint: String,
+}
+
+async fn register_push_endpoint_handler(
+    State(state): State<AppState>,
+    Extension(AuthedClientId(client_id)): Extension<AuthedClientId>,
+    Json(payload): Json<RegisterPushEndpointRequest>,
+) -> impl IntoResponse {
+    match Url::parse(&payload.endpoint) {
+        Ok(url) if url.scheme() == "https" => {}
+        _ => return StatusCode::BAD_REQUEST.into_response(),
+    }
+
+    match state
+        .upsert_push_endpoint(&client_id, payload.endpoint)
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => {
+            warn!(
+                "push register endpoint: failed for '{}': {err:#}",
+                client_id
+            );
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+async fn delete_push_endpoint_handler(
+    State(state): State<AppState>,
+    Extension(AuthedClientId(client_id)): Extension<AuthedClientId>,
+) -> impl IntoResponse {
+    match state.remove_push_endpoint(&client_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => {
+            warn!("push delete endpoint: failed for '{}': {err:#}", client_id);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
 // ── Server startup ─────────────────────────────────────────────────────────────
 
 pub fn build_app(state: AppState) -> Router {
@@ -742,11 +934,110 @@ pub fn build_app(state: AppState) -> Router {
             "/sync/{client_id}/promote-merge/{commit_id}",
             post(sync_promote_merge_handler),
         )
+        .route(
+            "/push/{client_id}/endpoint",
+            post(register_push_endpoint_handler).delete(delete_push_endpoint_handler),
+        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
         ))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+    use tempfile::TempDir;
+
+    #[derive(Clone)]
+    struct FakePushDelivery {
+        statuses: Arc<Mutex<HashMap<String, StatusCode>>>,
+        hits: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl FakePushDelivery {
+        fn new(statuses: impl IntoIterator<Item = (String, StatusCode)>) -> Self {
+            Self {
+                statuses: Arc::new(Mutex::new(statuses.into_iter().collect())),
+                hits: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        async fn hits(&self) -> Vec<String> {
+            self.hits.lock().await.clone()
+        }
+    }
+
+    impl PushDelivery for FakePushDelivery {
+        fn post_branch_updated<'a>(&'a self, endpoint: &'a str) -> PushDeliveryFuture<'a> {
+            Box::pin(async move {
+                self.hits.lock().await.push(endpoint.to_string());
+                Ok(self
+                    .statuses
+                    .lock()
+                    .await
+                    .get(endpoint)
+                    .copied()
+                    .unwrap_or(StatusCode::OK))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_push_notifications_removes_404_and_410_endpoints() {
+        let tempdir = TempDir::new().unwrap();
+        let config = Config {
+            git_store: tempdir.path().join("store.git"),
+            bind_addr: "127.0.0.1:0".into(),
+            database: crate::config::DatabaseCredentials {
+                password: Some("test-password".into()),
+                keyfile: None,
+            },
+            clients: vec![],
+        };
+        let store = GitStore::open_or_init(&config.git_store).unwrap();
+        let delivery = Arc::new(FakePushDelivery::new([
+            ("https://push.example/alice".into(), StatusCode::OK),
+            ("https://push.example/bob".into(), StatusCode::NOT_FOUND),
+            ("https://push.example/carol".into(), StatusCode::GONE),
+        ]));
+        let state = AppState::new_with_push_delivery(config.clone(), store, delivery.clone());
+        let now = Utc.with_ymd_and_hms(2026, 3, 18, 12, 0, 0).unwrap();
+
+        {
+            let push_state = state.push_state.lock().await;
+            push_state
+                .upsert_push_endpoint("alice", "https://push.example/alice".into(), now)
+                .unwrap();
+            push_state
+                .upsert_push_endpoint("bob", "https://push.example/bob".into(), now)
+                .unwrap();
+            push_state
+                .upsert_push_endpoint("carol", "https://push.example/carol".into(), now)
+                .unwrap();
+        }
+
+        state.dispatch_push_notifications().await.unwrap();
+
+        let hits = delivery.hits().await;
+        assert_eq!(
+            hits,
+            vec![
+                "https://push.example/alice".to_string(),
+                "https://push.example/bob".to_string(),
+                "https://push.example/carol".to_string()
+            ]
+        );
+
+        let loaded = {
+            let push_state = state.push_state.lock().await;
+            push_state.load().unwrap()
+        };
+        assert_eq!(loaded.push_endpoints.len(), 1);
+        assert!(loaded.push_endpoints.contains_key("alice"));
+    }
 }
 
 pub async fn serve_listener(listener: tokio::net::TcpListener, state: AppState) -> Result<()> {

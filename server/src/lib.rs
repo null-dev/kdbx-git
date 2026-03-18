@@ -7,6 +7,7 @@ use tracing::info;
 pub mod config;
 pub mod init;
 pub mod server;
+mod sync_state;
 
 pub use kdbx_git_common::{kdbx, storage, store};
 

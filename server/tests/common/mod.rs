@@ -86,6 +86,14 @@ pub fn test_config(root: &Path) -> Config {
     }
 }
 
+pub fn sync_state_path(config: &Config) -> PathBuf {
+    config
+        .git_store
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("sync-state.json")
+}
+
 pub fn sample_db(name: &str, title: &str) -> StorageDatabase {
     let mut db = StorageDatabase {
         kdbx_config: Default::default(),

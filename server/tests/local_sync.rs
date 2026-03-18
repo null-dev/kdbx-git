@@ -1763,7 +1763,15 @@ async fn sync_local_persists_pending_promote_state_before_promote_completes() {
         .spawn()
         .unwrap();
 
-    sleep(Duration::from_millis(750)).await;
+    wait_for_with_message("pending promote state file was not persisted", || {
+        let local_path = local_path.clone();
+        async move {
+            tokio::fs::try_exists(sync_state_path(&local_path))
+                .await
+                .unwrap_or(false)
+        }
+    })
+    .await;
 
     let state = load_sync_state(&local_path).await;
     let pending = state

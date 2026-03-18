@@ -6,27 +6,17 @@ use color_eyre::eyre::Result;
 pub mod config;
 pub mod sync;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CliCommand {
-    SyncLocal {
-        config_path: PathBuf,
-        local_path: PathBuf,
-        once: bool,
-        poll: bool,
-    },
-}
-
-#[derive(Debug, Parser)]
+#[derive(Debug, Clone, PartialEq, Eq, Parser)]
 #[command(name = "kdbx-git-sync-local", disable_help_subcommand = true)]
-struct RawCli {
-    #[arg(long, default_value = "config.toml")]
-    config: PathBuf,
+pub struct CliOptions {
+    #[arg(long = "config", default_value = "config.toml")]
+    pub config_path: PathBuf,
     #[arg(long)]
-    once: bool,
+    pub once: bool,
     #[arg(long)]
-    poll: bool,
+    pub poll: bool,
     #[arg()]
-    local_path: PathBuf,
+    pub local_path: PathBuf,
 }
 
 pub fn init_observability() -> Result<()> {
@@ -41,18 +31,11 @@ pub fn init_observability() -> Result<()> {
     Ok(())
 }
 
-pub fn parse_cli_args<I>(args: I) -> Result<CliCommand>
+pub fn parse_cli_args<I>(args: I) -> Result<CliOptions>
 where
     I: IntoIterator<Item = String>,
 {
-    let raw = RawCli::try_parse_from(args)?;
-
-    Ok(CliCommand::SyncLocal {
-        config_path: raw.config,
-        local_path: raw.local_path,
-        once: raw.once,
-        poll: raw.poll,
-    })
+    Ok(CliOptions::try_parse_from(args)?)
 }
 
 pub async fn run_cli<I>(args: I) -> Result<()>
@@ -61,27 +44,19 @@ where
 {
     init_observability()?;
 
-    match parse_cli_args(args)? {
-        CliCommand::SyncLocal {
-            config_path,
-            local_path,
-            once,
-            poll,
-        } => {
-            let config = config::Config::from_file(&config_path)?;
-            sync::sync_local(
-                config.clone(),
-                sync::SyncLocalOptions {
-                    client_id: config.client_id.clone(),
-                    local_path,
-                    once,
-                    poll,
-                    server_url: Some(config.server_url.clone()),
-                },
-            )
-            .await
-        }
-    }
+    let options = parse_cli_args(args)?;
+    let config = config::Config::from_file(&options.config_path)?;
+    sync::sync_local(
+        config.clone(),
+        sync::SyncLocalOptions {
+            client_id: config.client_id.clone(),
+            local_path: options.local_path,
+            once: options.once,
+            poll: options.poll,
+            server_url: Some(config.server_url.clone()),
+        },
+    )
+    .await
 }
 
 pub async fn sync_local_from_config_path(config_path: &Path, local_path: PathBuf) -> Result<()> {
@@ -101,14 +76,14 @@ pub async fn sync_local_from_config_path(config_path: &Path, local_path: PathBuf
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cli_args, CliCommand};
+    use super::{parse_cli_args, CliOptions};
     use std::path::PathBuf;
 
     #[test]
     fn parses_sync_local_with_defaults() {
         assert_eq!(
             parse_cli_args(["kdbx-git-sync-local".into(), "alice.kdbx".into()]).unwrap(),
-            CliCommand::SyncLocal {
+            CliOptions {
                 config_path: PathBuf::from("config.toml"),
                 local_path: PathBuf::from("alice.kdbx"),
                 once: false,
@@ -129,7 +104,7 @@ mod tests {
                 "alice.kdbx".into(),
             ])
             .unwrap(),
-            CliCommand::SyncLocal {
+            CliOptions {
                 config_path: PathBuf::from("custom.toml"),
                 local_path: PathBuf::from("alice.kdbx"),
                 once: true,

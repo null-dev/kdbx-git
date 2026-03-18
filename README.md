@@ -49,10 +49,6 @@ server_url = "http://127.0.0.1:8080"
 client_id = "laptop"
 username = "laptop"
 password = "laptop-webdav-password"
-
-[database]
-password = "correct horse battery staple"
-# keyfile = "./database.keyx"
 ```
 
 ## Usage
@@ -95,7 +91,7 @@ Point each client at its own WebDAV file:
 - username: the matching client `username`
 - password: the matching client `password`
 
-The database's master password/key file is still the KDBX master credential from the `[database]` section.
+The database's master password/key file is still the KDBX master credential from the server config's `[database]` section.
 
 ## Local File Sync
 

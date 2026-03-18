@@ -2,7 +2,7 @@ use std::{future::Future, pin::Pin, time::Duration};
 
 use chrono::Utc;
 use eyre::Result;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use tokio::time::timeout;
 use tracing::{debug, warn};
 use web_push::{
@@ -24,7 +24,7 @@ pub(super) type PushDeliveryFuture<'a> =
 
 pub(super) enum PushDeliveryResult {
     Delivered,
-    Revoked,
+    Revoked(StatusCode),
     Failed(PushDeliveryError),
 }
 
@@ -110,12 +110,9 @@ impl PushDelivery for ReqwestPushDelivery {
             {
                 Ok(Ok(response)) if response.status().is_success() => PushDeliveryResult::Delivered,
                 Ok(Ok(response))
-                    if matches!(
-                        response.status(),
-                        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::GONE
-                    ) =>
+                    if matches!(response.status(), StatusCode::NOT_FOUND | StatusCode::GONE) =>
                 {
-                    PushDeliveryResult::Revoked
+                    PushDeliveryResult::Revoked(response.status())
                 }
                 Ok(Ok(response)) => PushDeliveryResult::Failed(PushDeliveryError(format!(
                     "unexpected status {}",
@@ -176,10 +173,16 @@ impl AppState {
                 .post_branch_updated(&subscription, &self.vapid_keys)
                 .await
             {
-                PushDeliveryResult::Revoked => revoked.push(RevokedPushEndpoint {
-                    client_id,
-                    subscription,
-                }),
+                PushDeliveryResult::Revoked(status) => {
+                    warn!(
+                        "push delivery to '{}' for client '{}' returned {}; removing revoked subscription",
+                        subscription.endpoint, client_id, status
+                    );
+                    revoked.push(RevokedPushEndpoint {
+                        client_id,
+                        subscription,
+                    });
+                }
                 PushDeliveryResult::Delivered => {
                     debug!(
                         "push delivery to '{}' for client '{}' succeeded",
@@ -272,7 +275,9 @@ mod tests {
                     .copied()
                     .unwrap_or(StatusCode::OK)
                 {
-                    StatusCode::NOT_FOUND | StatusCode::GONE => PushDeliveryResult::Revoked,
+                    status @ (StatusCode::NOT_FOUND | StatusCode::GONE) => {
+                        PushDeliveryResult::Revoked(status)
+                    }
                     status if status.is_success() => PushDeliveryResult::Delivered,
                     status => PushDeliveryResult::Failed(PushDeliveryError(format!(
                         "unexpected status {status}"

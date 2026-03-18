@@ -4,6 +4,9 @@ use super::types::*;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::NaiveDateTime;
 use eyre::{Context, Result};
+use keepass::config::{
+    CompressionConfig, DatabaseConfig, InnerCipherConfig, KdfConfig, OuterCipherConfig,
+};
 use keepass::{
     db::{
         Attachment, AutoType, AutoTypeAssociation, Color, CustomDataItem, CustomDataValue,
@@ -65,6 +68,7 @@ pub fn db_to_storage(db: &Database) -> Result<StorageDatabase> {
         .collect();
 
     Ok(StorageDatabase {
+        kdbx_config: db_config_to_storage(&db.config)?,
         meta: meta_to_storage(&db.meta)?,
         root: group_to_storage(&db.root)?,
         deleted_objects: deleted,
@@ -72,13 +76,12 @@ pub fn db_to_storage(db: &Database) -> Result<StorageDatabase> {
 }
 
 /// Reconstruct a keepass [`Database`] from storage.
-///
-/// The caller supplies the [`keepass::config::DatabaseConfig`] so that
-/// cipher / KDF settings can be chosen independently of this layer.
-pub fn storage_to_db(
-    s: &StorageDatabase,
-    config: keepass::config::DatabaseConfig,
-) -> Result<Database> {
+pub fn storage_to_db(s: &StorageDatabase) -> Result<Database> {
+    storage_to_db_with_config(s, storage_to_db_config(&s.kdbx_config)?)
+}
+
+/// Reconstruct a keepass [`Database`] from storage, overriding the KDBX config.
+pub fn storage_to_db_with_config(s: &StorageDatabase, config: DatabaseConfig) -> Result<Database> {
     let mut deleted = HashMap::new();
     for (uuid_str, dt_str) in &s.deleted_objects {
         deleted.insert(s2u(uuid_str)?, opt_str_dt(dt_str.as_deref())?);
@@ -89,6 +92,104 @@ pub fn storage_to_db(
     db.root = storage_to_group(&s.root)?;
     db.deleted_objects = deleted;
     Ok(db)
+}
+
+pub fn db_config_to_storage(config: &DatabaseConfig) -> Result<StorageKdbxConfig> {
+    Ok(StorageKdbxConfig {
+        outer_cipher: match config.outer_cipher_config {
+            OuterCipherConfig::AES256 => StorageOuterCipherConfig::Aes256,
+            OuterCipherConfig::Twofish => StorageOuterCipherConfig::Twofish,
+            OuterCipherConfig::ChaCha20 => StorageOuterCipherConfig::ChaCha20,
+        },
+        compression: match config.compression_config {
+            CompressionConfig::None => StorageCompressionConfig::None,
+            CompressionConfig::GZip => StorageCompressionConfig::Gzip,
+        },
+        inner_cipher: match config.inner_cipher_config {
+            InnerCipherConfig::Plain => StorageInnerCipherConfig::Plain,
+            InnerCipherConfig::Salsa20 => StorageInnerCipherConfig::Salsa20,
+            InnerCipherConfig::ChaCha20 => StorageInnerCipherConfig::ChaCha20,
+        },
+        kdf: match &config.kdf_config {
+            KdfConfig::Aes { rounds } => StorageKdfConfig::Aes { rounds: *rounds },
+            KdfConfig::Argon2 {
+                iterations,
+                memory,
+                parallelism,
+                version,
+            } => StorageKdfConfig::Argon2 {
+                iterations: *iterations,
+                memory: *memory,
+                parallelism: *parallelism,
+                version: version.as_u32(),
+            },
+            KdfConfig::Argon2id {
+                iterations,
+                memory,
+                parallelism,
+                version,
+            } => StorageKdfConfig::Argon2id {
+                iterations: *iterations,
+                memory: *memory,
+                parallelism: *parallelism,
+                version: version.as_u32(),
+            },
+        },
+    })
+}
+
+pub fn storage_to_db_config(config: &StorageKdbxConfig) -> Result<DatabaseConfig> {
+    Ok(DatabaseConfig {
+        version: keepass::config::DatabaseVersion::KDB4(1),
+        outer_cipher_config: match config.outer_cipher {
+            StorageOuterCipherConfig::Aes256 => OuterCipherConfig::AES256,
+            StorageOuterCipherConfig::Twofish => OuterCipherConfig::Twofish,
+            StorageOuterCipherConfig::ChaCha20 => OuterCipherConfig::ChaCha20,
+        },
+        compression_config: match config.compression {
+            StorageCompressionConfig::None => CompressionConfig::None,
+            StorageCompressionConfig::Gzip => CompressionConfig::GZip,
+        },
+        inner_cipher_config: match config.inner_cipher {
+            StorageInnerCipherConfig::Plain => InnerCipherConfig::Plain,
+            StorageInnerCipherConfig::Salsa20 => InnerCipherConfig::Salsa20,
+            StorageInnerCipherConfig::ChaCha20 => InnerCipherConfig::ChaCha20,
+        },
+        kdf_config: match &config.kdf {
+            StorageKdfConfig::Aes { rounds } => KdfConfig::Aes { rounds: *rounds },
+            StorageKdfConfig::Argon2 {
+                iterations,
+                memory,
+                parallelism,
+                version,
+            } => KdfConfig::Argon2 {
+                iterations: *iterations,
+                memory: *memory,
+                parallelism: *parallelism,
+                version: argon2_version(*version)?,
+            },
+            StorageKdfConfig::Argon2id {
+                iterations,
+                memory,
+                parallelism,
+                version,
+            } => KdfConfig::Argon2id {
+                iterations: *iterations,
+                memory: *memory,
+                parallelism: *parallelism,
+                version: argon2_version(*version)?,
+            },
+        },
+        public_custom_data: None,
+    })
+}
+
+fn argon2_version(version: u32) -> Result<argon2::Version> {
+    match version {
+        0x10 => Ok(argon2::Version::Version10),
+        0x13 => Ok(argon2::Version::Version13),
+        other => Err(eyre::eyre!("unsupported Argon2 version: {other:#x}")),
+    }
 }
 
 // ── Meta ─────────────────────────────────────────────────────────────────────

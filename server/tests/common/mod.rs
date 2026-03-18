@@ -92,6 +92,7 @@ pub fn test_config(root: &Path, source_path: Option<PathBuf>) -> Config {
 
 pub fn sample_db(name: &str, title: &str) -> StorageDatabase {
     let mut db = StorageDatabase {
+        kdbx_config: Default::default(),
         meta: StorageMeta {
             generator: Some("kdbx-git-integration".into()),
             database_name: Some(name.into()),

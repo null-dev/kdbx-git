@@ -120,6 +120,7 @@ mod tests {
 
     fn minimal_db() -> StorageDatabase {
         StorageDatabase {
+            kdbx_config: StorageKdbxConfig::default(),
             meta: StorageMeta {
                 generator: Some("kdbx-git".into()),
                 database_name: Some("Test DB".into()),
@@ -289,6 +290,7 @@ mod tests {
         }
 
         StorageDatabase {
+            kdbx_config: StorageKdbxConfig::default(),
             meta: StorageMeta {
                 generator: Some("kdbx-git".into()),
                 database_name: Some("Order Test".into()),
@@ -411,6 +413,7 @@ mod tests {
             .collect();
 
         StorageDatabase {
+            kdbx_config: StorageKdbxConfig::default(),
             meta: StorageMeta {
                 generator: Some("kdbx-git".into()),
                 database_name: Some("Canonical Order Test".into()),

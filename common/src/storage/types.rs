@@ -10,10 +10,75 @@ use std::collections::BTreeMap;
 /// Root document stored per git commit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageDatabase {
+    #[serde(default)]
+    pub kdbx_config: StorageKdbxConfig,
     pub meta: StorageMeta,
     pub root: StorageGroup,
     /// UUID (string) → deletion timestamp (ISO 8601) or `null`.
     pub deleted_objects: BTreeMap<String, Option<String>>,
+}
+
+/// Persisted KDBX header settings that should survive import/export round-trips.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageKdbxConfig {
+    pub outer_cipher: StorageOuterCipherConfig,
+    pub compression: StorageCompressionConfig,
+    pub inner_cipher: StorageInnerCipherConfig,
+    pub kdf: StorageKdfConfig,
+}
+
+impl Default for StorageKdbxConfig {
+    fn default() -> Self {
+        Self {
+            outer_cipher: StorageOuterCipherConfig::Aes256,
+            compression: StorageCompressionConfig::Gzip,
+            inner_cipher: StorageInnerCipherConfig::ChaCha20,
+            kdf: StorageKdfConfig::Aes { rounds: 600_000 },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageOuterCipherConfig {
+    Aes256,
+    Twofish,
+    ChaCha20,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageCompressionConfig {
+    None,
+    Gzip,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageInnerCipherConfig {
+    Plain,
+    Salsa20,
+    ChaCha20,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StorageKdfConfig {
+    Aes {
+        rounds: u64,
+    },
+    Argon2 {
+        iterations: u64,
+        memory: u64,
+        parallelism: u32,
+        version: u32,
+    },
+    Argon2id {
+        iterations: u64,
+        memory: u64,
+        parallelism: u32,
+        version: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

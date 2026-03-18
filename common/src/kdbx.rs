@@ -10,13 +10,7 @@ use crate::storage::{
     types::StorageDatabase,
 };
 use eyre::{Context, Result};
-use keepass::{
-    config::{
-        CompressionConfig, DatabaseConfig, DatabaseVersion, InnerCipherConfig, KdfConfig,
-        OuterCipherConfig,
-    },
-    Database, DatabaseKey,
-};
+use keepass::{Database, DatabaseKey};
 
 pub trait KdbxCredentials {
     fn password(&self) -> Option<&str>;
@@ -42,15 +36,7 @@ pub fn make_key(creds: &impl KdbxCredentials) -> Result<DatabaseKey> {
 ///
 /// Blocking — call inside `tokio::task::spawn_blocking`.
 pub fn build_kdbx_sync(storage: &StorageDatabase, creds: &impl KdbxCredentials) -> Result<Vec<u8>> {
-    let config = DatabaseConfig {
-        version: DatabaseVersion::KDB4(1),
-        outer_cipher_config: OuterCipherConfig::AES256,
-        compression_config: CompressionConfig::GZip,
-        inner_cipher_config: InnerCipherConfig::ChaCha20,
-        kdf_config: KdfConfig::Aes { rounds: 600_000 },
-        public_custom_data: None,
-    };
-    let db = storage_to_db(storage, config).wrap_err("failed to reconstruct database")?;
+    let db = storage_to_db(storage).wrap_err("failed to reconstruct database")?;
     let key = make_key(creds)?;
     let mut out = Vec::new();
     db.save(&mut out, key)

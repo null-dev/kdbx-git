@@ -18,7 +18,7 @@
 //! that holds the full database snapshot serialised by [`crate::storage`].
 
 use crate::storage::{
-    convert::{db_to_storage, storage_to_db},
+    convert::{db_to_storage, storage_to_db_with_config},
     format::{deserialize, serialize, StorageFormat},
     types::StorageDatabase,
 };
@@ -890,14 +890,17 @@ pub fn merge_databases(
     from_storage: &StorageDatabase,
 ) -> Result<StorageDatabase> {
     let config = merge_db_config();
-    let mut into_db = storage_to_db(into_storage, config.clone())
+    let mut into_db = storage_to_db_with_config(into_storage, config.clone())
         .wrap_err("failed to reconstruct 'into' database for merge")?;
-    let from_db = storage_to_db(from_storage, config)
+    let from_db = storage_to_db_with_config(from_storage, config)
         .wrap_err("failed to reconstruct 'from' database for merge")?;
     into_db
         .merge(&from_db)
         .map_err(|e| eyre::eyre!("keepass merge failed: {e:?}"))?;
-    db_to_storage(&into_db).wrap_err("failed to convert merged database back to storage")
+    let mut merged =
+        db_to_storage(&into_db).wrap_err("failed to convert merged database back to storage")?;
+    merged.kdbx_config = from_storage.kdbx_config.clone();
+    Ok(merged)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -917,6 +920,7 @@ mod tests {
 
     fn simple_db(name: &str) -> StorageDatabase {
         StorageDatabase {
+            kdbx_config: StorageKdbxConfig::default(),
             meta: StorageMeta {
                 generator: Some("kdbx-git-test".into()),
                 database_name: Some(name.into()),
@@ -1107,6 +1111,42 @@ mod tests {
             tip_after_second, tip_after_third,
             "branch tip should advance on changed write"
         );
+    }
+
+    #[tokio::test]
+    async fn test_process_client_write_commits_when_only_kdbx_config_changes() {
+        let (_dir, store) = make_temp_store();
+
+        let initial = simple_db("Alice DB");
+        store
+            .process_client_write("alice".into(), initial)
+            .await
+            .unwrap();
+        let tip_after_first = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+
+        let mut reconfigured = simple_db("Alice DB");
+        reconfigured.kdbx_config.outer_cipher = StorageOuterCipherConfig::Twofish;
+        reconfigured.kdbx_config.compression = StorageCompressionConfig::None;
+        reconfigured.kdbx_config.inner_cipher = StorageInnerCipherConfig::Salsa20;
+        reconfigured.kdbx_config.kdf = StorageKdfConfig::Aes { rounds: 42_000 };
+
+        let updated = store
+            .process_client_write("alice".into(), reconfigured.clone())
+            .await
+            .unwrap();
+        assert!(
+            !updated.is_empty(),
+            "config-only changes should still update branches"
+        );
+
+        let tip_after_second = store.branch_tip_id("alice".into()).await.unwrap().unwrap();
+        assert_ne!(
+            tip_after_first, tip_after_second,
+            "branch tip should advance when only the KDBX config changes"
+        );
+
+        let read = store.read_branch("alice".into()).await.unwrap().unwrap();
+        assert_eq!(read.kdbx_config, reconfigured.kdbx_config);
     }
 
     #[tokio::test]

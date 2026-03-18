@@ -74,6 +74,10 @@ impl AppState {
             }
         }
     }
+
+    pub(crate) fn vapid_public_key(&self) -> &str {
+        &self.vapid_keys.public_key
+    }
 }
 
 impl std::fmt::Debug for AppState {

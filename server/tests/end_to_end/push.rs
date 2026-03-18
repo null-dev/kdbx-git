@@ -25,6 +25,11 @@ fn read_push_state(path: &Path) -> PushStateFile {
     serde_json::from_str(&contents).unwrap()
 }
 
+#[derive(Debug, Deserialize)]
+struct VapidPublicKeyResponse {
+    public_key: String,
+}
+
 #[tokio::test]
 async fn server_startup_creates_vapid_keypair_in_sync_state() {
     let tempdir = TempDir::new().unwrap();
@@ -38,6 +43,51 @@ async fn server_startup_creates_vapid_keypair_in_sync_state() {
     assert!(!vapid.private_key.is_empty());
     assert!(!vapid.public_key.is_empty());
     assert!(state.push_endpoints.is_empty());
+}
+
+#[tokio::test]
+async fn get_vapid_public_key_returns_persisted_key() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path());
+    let sync_state_path = common::sync_state_path(&config);
+    let server = TestServer::start(config, tempdir).await.unwrap();
+    let client = Client::new();
+
+    let response = authed(
+        &client,
+        "alice",
+        "alice-pass",
+        reqwest::Method::GET,
+        &format!("{}/push/alice/vapid-public-key", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let payload: VapidPublicKeyResponse = response.json().await.unwrap();
+    let state = read_push_state(&sync_state_path);
+    assert_eq!(payload.public_key, state.vapid.unwrap().public_key);
+}
+
+#[tokio::test]
+async fn get_vapid_public_key_requires_matching_basic_auth_identity() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path());
+    let server = TestServer::start(config, tempdir).await.unwrap();
+    let client = Client::new();
+
+    let response = authed(
+        &client,
+        "bob",
+        "bob-pass",
+        reqwest::Method::GET,
+        &format!("{}/push/alice/vapid-public-key", server.base_url),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

@@ -94,6 +94,7 @@ The database's master password/key file is still the KDBX master credential from
 
 Mobile clients can register a UnifiedPush endpoint with the server:
 
+- `GET /push/<client-id>/vapid-public-key` to fetch the server's VAPID public key
 - `POST /push/<client-id>/endpoint` with JSON body `{"endpoint":"https://..."}`
 - `DELETE /push/<client-id>/endpoint` to unregister
 

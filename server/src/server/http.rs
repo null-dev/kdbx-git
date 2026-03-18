@@ -16,7 +16,7 @@ use futures_util::{stream, StreamExt};
 use gix::ObjectId;
 use http::{header, StatusCode};
 use reqwest::Url;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::task::spawn_blocking;
 use tracing::{info, warn};
 
@@ -223,6 +223,25 @@ pub(super) struct RegisterPushEndpointRequest {
     endpoint: String,
 }
 
+#[derive(Serialize)]
+pub(super) struct VapidPublicKeyResponse {
+    public_key: String,
+}
+
+pub(super) async fn get_vapid_public_key_handler(
+    State(state): State<AppState>,
+    req: Request,
+) -> impl IntoResponse {
+    if authed_client_id(&req).is_none() {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
+    Json(VapidPublicKeyResponse {
+        public_key: state.vapid_public_key().to_string(),
+    })
+    .into_response()
+}
+
 pub(super) async fn register_push_endpoint_handler(
     State(state): State<AppState>,
     Extension(AuthedClientId(client_id)): Extension<AuthedClientId>,
@@ -278,6 +297,10 @@ pub fn build_app(state: AppState) -> Router {
         .route(
             "/push/{client_id}/endpoint",
             post(register_push_endpoint_handler).delete(delete_push_endpoint_handler),
+        )
+        .route(
+            "/push/{client_id}/vapid-public-key",
+            get(get_vapid_public_key_handler),
         )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),

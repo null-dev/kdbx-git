@@ -58,24 +58,36 @@ use futures_util::{stream, StreamExt};
 use gix::ObjectId;
 use http::{header, StatusCode};
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::{
     sync::{watch, Mutex},
     task::spawn_blocking,
+    time::timeout,
 };
 use tracing::{info, warn};
+use web_push::{
+    request_builder, SubscriptionInfo, Urgency, VapidSignatureBuilder, WebPushMessageBuilder,
+};
 
 use crate::{
     config::Config,
     kdbx::{build_kdbx_sync, parse_kdbx_sync},
     store::{BranchConflictError, GitStore, MAIN_BRANCH},
-    sync_state::{RevokedPushEndpoint, SyncStateStore},
+    sync_state::{RevokedPushEndpoint, SyncStateStore, VapidKeys},
 };
 
 const PUSH_DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
+const PUSH_DELIVERY_TTL_SECS: u32 = 30;
+const PUSH_TOPIC: &str = "branch-updated";
 
-type PushDeliveryFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<StatusCode, PushDeliveryError>> + Send + 'a>>;
+type PushDeliveryFuture<'a> = Pin<Box<dyn Future<Output = PushDeliveryResult> + Send + 'a>>;
+
+#[derive(Debug)]
+enum PushDeliveryResult {
+    Delivered,
+    Revoked,
+    Failed(PushDeliveryError),
+}
 
 #[derive(Debug)]
 struct PushDeliveryError(String);
@@ -89,7 +101,11 @@ impl std::fmt::Display for PushDeliveryError {
 impl std::error::Error for PushDeliveryError {}
 
 trait PushDelivery: Send + Sync {
-    fn post_branch_updated<'a>(&'a self, endpoint: &'a str) -> PushDeliveryFuture<'a>;
+    fn post_branch_updated<'a>(
+        &'a self,
+        endpoint: &'a str,
+        vapid: &'a VapidKeys,
+    ) -> PushDeliveryFuture<'a>;
 }
 
 #[derive(Clone)]
@@ -97,23 +113,67 @@ struct ReqwestPushDelivery {
     client: reqwest::Client,
 }
 
-#[derive(Serialize)]
-struct BranchUpdatedNotification<'a> {
-    event: &'a str,
-}
-
 impl PushDelivery for ReqwestPushDelivery {
-    fn post_branch_updated<'a>(&'a self, endpoint: &'a str) -> PushDeliveryFuture<'a> {
+    fn post_branch_updated<'a>(
+        &'a self,
+        endpoint: &'a str,
+        vapid: &'a VapidKeys,
+    ) -> PushDeliveryFuture<'a> {
         Box::pin(async move {
-            self.client
-                .post(endpoint)
-                .json(&BranchUpdatedNotification {
-                    event: "branch-updated",
-                })
-                .send()
-                .await
-                .map(|response| response.status())
-                .map_err(|err| PushDeliveryError(err.to_string()))
+            let subscription_info = SubscriptionInfo::new(endpoint, "", "");
+            let signature =
+                match VapidSignatureBuilder::from_base64(&vapid.private_key, &subscription_info) {
+                    Ok(builder) => match builder.build() {
+                        Ok(signature) => signature,
+                        Err(err) => {
+                            return PushDeliveryResult::Failed(PushDeliveryError(err.to_string()));
+                        }
+                    },
+                    Err(err) => {
+                        return PushDeliveryResult::Failed(PushDeliveryError(err.to_string()))
+                    }
+                };
+
+            let mut builder = WebPushMessageBuilder::new(&subscription_info);
+            builder.set_ttl(PUSH_DELIVERY_TTL_SECS);
+            builder.set_urgency(Urgency::Low);
+            builder.set_topic(PUSH_TOPIC.to_string());
+            builder.set_vapid_signature(signature);
+
+            let message = match builder.build() {
+                Ok(message) => message,
+                Err(err) => return PushDeliveryResult::Failed(PushDeliveryError(err.to_string())),
+            };
+
+            let request = request_builder::build_request::<Vec<u8>>(message);
+            let uri = request.uri().to_string();
+            let mut reqwest_request = self.client.post(uri);
+            for (name, value) in request.headers() {
+                reqwest_request = reqwest_request.header(name.as_str(), value.as_bytes());
+            }
+
+            match timeout(
+                PUSH_DELIVERY_TIMEOUT,
+                reqwest_request.body(request.into_body()).send(),
+            )
+            .await
+            {
+                Ok(Ok(response)) if response.status().is_success() => PushDeliveryResult::Delivered,
+                Ok(Ok(response))
+                    if matches!(
+                        response.status(),
+                        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::GONE
+                    ) =>
+                {
+                    PushDeliveryResult::Revoked
+                }
+                Ok(Ok(response)) => PushDeliveryResult::Failed(PushDeliveryError(format!(
+                    "unexpected status {}",
+                    response.status()
+                ))),
+                Ok(Err(err)) => PushDeliveryResult::Failed(PushDeliveryError(err.to_string())),
+                Err(_) => PushDeliveryResult::Failed(PushDeliveryError("timed out".into())),
+            }
         })
     }
 }
@@ -125,6 +185,7 @@ impl PushDelivery for ReqwestPushDelivery {
 pub struct AppState {
     pub store: Arc<Mutex<GitStore>>,
     pub config: Arc<Config>,
+    vapid_keys: Arc<VapidKeys>,
     push_state: Arc<Mutex<SyncStateStore>>,
     push_delivery: Arc<dyn PushDelivery>,
     /// Per-branch notification channels.  Includes an entry for `MAIN_BRANCH`
@@ -133,7 +194,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: Config, store: GitStore) -> Self {
+    pub fn new(config: Config, store: GitStore) -> Result<Self> {
         let push_delivery = ReqwestPushDelivery {
             client: reqwest::Client::builder()
                 .timeout(PUSH_DELIVERY_TIMEOUT)
@@ -147,7 +208,9 @@ impl AppState {
         config: Config,
         store: GitStore,
         push_delivery: Arc<dyn PushDelivery>,
-    ) -> Self {
+    ) -> Result<Self> {
+        let sync_state_store = SyncStateStore::for_git_store(&config.git_store);
+        let vapid_keys = sync_state_store.ensure_vapid_keys()?;
         let mut branch_notifications: HashMap<String, watch::Sender<u64>> = config
             .clients
             .iter()
@@ -162,13 +225,14 @@ impl AppState {
         let (main_tx, _) = watch::channel(0_u64);
         branch_notifications.insert(MAIN_BRANCH.to_string(), main_tx);
 
-        Self {
+        Ok(Self {
             store: Arc::new(Mutex::new(store)),
-            push_state: Arc::new(Mutex::new(SyncStateStore::for_git_store(&config.git_store))),
+            vapid_keys: Arc::new(vapid_keys),
+            push_state: Arc::new(Mutex::new(sync_state_store)),
             push_delivery,
             config: Arc::new(config),
             branch_notifications: Arc::new(branch_notifications),
-        }
+        })
     }
 
     fn subscribe_branch_notifications(&self, branch_id: &str) -> Option<watch::Receiver<u64>> {
@@ -218,19 +282,17 @@ impl AppState {
 
         let mut revoked = Vec::new();
         for (client_id, endpoint) in targets {
-            match self.push_delivery.post_branch_updated(&endpoint).await {
-                Ok(StatusCode::NOT_FOUND | StatusCode::GONE) => revoked.push(RevokedPushEndpoint {
+            match self
+                .push_delivery
+                .post_branch_updated(&endpoint, &self.vapid_keys)
+                .await
+            {
+                PushDeliveryResult::Revoked => revoked.push(RevokedPushEndpoint {
                     client_id,
                     endpoint,
                 }),
-                Ok(status) if status.is_success() => {}
-                Ok(status) => {
-                    warn!(
-                        "push delivery to '{}' for client '{}' returned {}",
-                        endpoint, client_id, status
-                    );
-                }
-                Err(err) => {
+                PushDeliveryResult::Delivered => {}
+                PushDeliveryResult::Failed(err) => {
                     warn!(
                         "push delivery to '{}' for client '{}' failed: {}",
                         endpoint, client_id, err
@@ -971,16 +1033,27 @@ mod tests {
     }
 
     impl PushDelivery for FakePushDelivery {
-        fn post_branch_updated<'a>(&'a self, endpoint: &'a str) -> PushDeliveryFuture<'a> {
+        fn post_branch_updated<'a>(
+            &'a self,
+            endpoint: &'a str,
+            _vapid: &'a VapidKeys,
+        ) -> PushDeliveryFuture<'a> {
             Box::pin(async move {
                 self.hits.lock().await.push(endpoint.to_string());
-                Ok(self
+                match self
                     .statuses
                     .lock()
                     .await
                     .get(endpoint)
                     .copied()
-                    .unwrap_or(StatusCode::OK))
+                    .unwrap_or(StatusCode::OK)
+                {
+                    StatusCode::NOT_FOUND | StatusCode::GONE => PushDeliveryResult::Revoked,
+                    status if status.is_success() => PushDeliveryResult::Delivered,
+                    status => PushDeliveryResult::Failed(PushDeliveryError(format!(
+                        "unexpected status {status}"
+                    ))),
+                }
             })
         }
     }
@@ -1003,7 +1076,8 @@ mod tests {
             ("https://push.example/bob".into(), StatusCode::NOT_FOUND),
             ("https://push.example/carol".into(), StatusCode::GONE),
         ]));
-        let state = AppState::new_with_push_delivery(config.clone(), store, delivery.clone());
+        let state =
+            AppState::new_with_push_delivery(config.clone(), store, delivery.clone()).unwrap();
         let now = Utc.with_ymd_and_hms(2026, 3, 18, 12, 0, 0).unwrap();
 
         {
@@ -1049,7 +1123,7 @@ pub async fn serve_listener(listener: tokio::net::TcpListener, state: AppState) 
 }
 
 pub async fn run_server(config: Config, store: GitStore) -> Result<()> {
-    let state = AppState::new(config, store);
+    let state = AppState::new(config, store)?;
     let bind_addr = state.config.bind_addr.clone();
 
     info!("Listening on http://{bind_addr}");

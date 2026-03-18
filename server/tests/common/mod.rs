@@ -35,7 +35,7 @@ impl TestServer {
         let listener = TcpListener::bind(&config.bind_addr).await?;
         let base_url = format!("http://{}", listener.local_addr()?);
         let store = GitStore::open_or_init(&config.git_store)?;
-        let state = AppState::new(config.clone(), store);
+        let state = AppState::new(config.clone(), store)?;
         let handle = tokio::spawn(async move { serve_listener(listener, state).await });
 
         Ok(Self {

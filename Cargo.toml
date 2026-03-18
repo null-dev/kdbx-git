@@ -19,6 +19,7 @@ eyre = "0.6"
 futures-util = "0.3"
 gix = "0.70"
 http = "1"
+jwt-simple = { version = "0.12.11", default-features = false, features = ["pure-rust"] }
 keepass = { git = "https://github.com/null-dev/keepass-nd", features = ["save_kdbx4", "_merge"] }
 notify = "8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
@@ -30,6 +31,7 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+web-push = { version = "0.11.0", default-features = false }
 
 kdbx-git-common = { path = "common" }
 kdbx-git-sync-local = { path = "sync-local" }

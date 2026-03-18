@@ -3,8 +3,15 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 struct PushStateFile {
+    vapid: Option<PushStateVapid>,
     #[serde(default)]
     push_endpoints: BTreeMap<String, PushEndpointFileEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PushStateVapid {
+    private_key: String,
+    public_key: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -16,6 +23,21 @@ struct PushEndpointFileEntry {
 fn read_push_state(path: &Path) -> PushStateFile {
     let contents = std::fs::read_to_string(path).unwrap();
     serde_json::from_str(&contents).unwrap()
+}
+
+#[tokio::test]
+async fn server_startup_creates_vapid_keypair_in_sync_state() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path());
+    let sync_state_path = common::sync_state_path(&config);
+
+    let _server = TestServer::start(config, tempdir).await.unwrap();
+
+    let state = read_push_state(&sync_state_path);
+    let vapid = state.vapid.expect("expected VAPID keys on startup");
+    assert!(!vapid.private_key.is_empty());
+    assert!(!vapid.public_key.is_empty());
+    assert!(state.push_endpoints.is_empty());
 }
 
 #[tokio::test]
@@ -42,6 +64,7 @@ async fn register_push_endpoint_persists_endpoint_and_updates_timestamp() {
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     let state = read_push_state(&sync_state_path);
+    assert!(state.vapid.is_some());
     let alice = state.push_endpoints.get("alice").unwrap();
     assert_eq!(alice.endpoint, "https://push.example/alice-1");
     assert!(!alice.last_seen_at.is_empty());
@@ -79,6 +102,7 @@ async fn register_push_endpoint_replaces_existing_endpoint() {
         state.push_endpoints["alice"].endpoint,
         "https://push.example/alice-new"
     );
+    assert!(state.vapid.is_some());
 }
 
 #[tokio::test]
@@ -120,6 +144,7 @@ async fn delete_push_endpoint_is_idempotent() {
 
     let state = read_push_state(&sync_state_path);
     assert!(state.push_endpoints.is_empty());
+    assert!(state.vapid.is_some());
 }
 
 #[tokio::test]
@@ -172,7 +197,9 @@ async fn register_push_endpoint_rejects_non_https_urls() {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
-    assert!(!sync_state_path.exists());
+    let state = read_push_state(&sync_state_path);
+    assert!(state.vapid.is_some());
+    assert!(state.push_endpoints.is_empty());
 }
 
 #[tokio::test]
@@ -216,4 +243,5 @@ async fn register_push_endpoint_prunes_expired_entries_on_write() {
     assert_eq!(state.push_endpoints.len(), 1);
     assert!(state.push_endpoints.contains_key("alice"));
     assert!(!state.push_endpoints.contains_key("stale-client"));
+    assert!(state.vapid.is_some());
 }

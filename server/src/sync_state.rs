@@ -5,9 +5,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::{DateTime, Duration, Utc};
 use eyre::{Context, Result};
+use jwt_simple::prelude::ES256KeyPair;
 use serde::{Deserialize, Serialize};
+use web_push::VapidSignatureBuilder;
 
 const SYNC_STATE_FILE_NAME: &str = "sync-state.json";
 const TEMP_FILE_SUFFIX: &str = ".tmp";
@@ -21,6 +24,8 @@ pub(crate) struct PushEndpointRecord {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SyncState {
+    #[serde(default)]
+    pub vapid: Option<VapidKeys>,
     #[serde(default)]
     pub push_endpoints: BTreeMap<String, PushEndpointRecord>,
 }
@@ -37,6 +42,12 @@ impl SyncState {
 pub(crate) struct RevokedPushEndpoint {
     pub client_id: String,
     pub endpoint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct VapidKeys {
+    pub private_key: String,
+    pub public_key: String,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +138,19 @@ impl SyncStateStore {
         self.save(&mut state, now)
     }
 
+    pub(crate) fn ensure_vapid_keys(&self) -> Result<VapidKeys> {
+        let now = Utc::now();
+        let mut state = self.load()?;
+        if let Some(vapid) = state.vapid.clone() {
+            return Ok(vapid);
+        }
+
+        let vapid = generate_vapid_keys();
+        state.vapid = Some(vapid.clone());
+        self.save(&mut state, now)?;
+        Ok(vapid)
+    }
+
     fn save(&self, state: &mut SyncState, now: DateTime<Utc>) -> Result<()> {
         state.prune_expired(now);
 
@@ -163,6 +187,21 @@ impl SyncStateStore {
         std::fs::rename(&temp_path, &self.path)
             .wrap_err("failed to atomically replace sync-state.json")?;
         Ok(())
+    }
+}
+
+fn generate_vapid_keys() -> VapidKeys {
+    let key_pair = ES256KeyPair::generate();
+    let private_key = URL_SAFE_NO_PAD.encode(key_pair.to_bytes());
+    let public_key = URL_SAFE_NO_PAD.encode(
+        VapidSignatureBuilder::from_base64_no_sub(&private_key)
+            .expect("generated VAPID private key should be valid")
+            .get_public_key(),
+    );
+
+    VapidKeys {
+        private_key,
+        public_key,
     }
 }
 
@@ -247,5 +286,36 @@ mod tests {
 
         assert!(store.path().exists());
         assert!(!store.path().with_file_name("sync-state.json.tmp").exists());
+    }
+
+    #[test]
+    fn ensure_vapid_keys_creates_and_persists_keypair() {
+        let tempdir = TempDir::new().unwrap();
+        let store = SyncStateStore::new(tempdir.path().join("sync-state.json"));
+
+        let generated = store.ensure_vapid_keys().unwrap();
+        let loaded = store.load().unwrap();
+
+        assert_eq!(loaded.vapid, Some(generated.clone()));
+        assert!(!generated.private_key.is_empty());
+        assert!(!generated.public_key.is_empty());
+    }
+
+    #[test]
+    fn ensure_vapid_keys_reuses_existing_keypair() {
+        let tempdir = TempDir::new().unwrap();
+        let store = SyncStateStore::new(tempdir.path().join("sync-state.json"));
+        let now = Utc.with_ymd_and_hms(2026, 3, 18, 12, 0, 0).unwrap();
+        let existing = VapidKeys {
+            private_key: "private".into(),
+            public_key: "public".into(),
+        };
+
+        let mut state = SyncState::default();
+        state.vapid = Some(existing.clone());
+        store.save(&mut state, now).unwrap();
+
+        let ensured = store.ensure_vapid_keys().unwrap();
+        assert_eq!(ensured, existing);
     }
 }

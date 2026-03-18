@@ -36,7 +36,7 @@ Notes:
 
 - `database.password` / `database.keyfile` are the master credentials used to decrypt uploads and re-encrypt downloads.
 - `git_store` is a bare repo, so inspect it with commands like `git --git-dir ./store.git log --stat main`.
-- the server also keeps `sync-state.json` next to `git_store` to persist registered UnifiedPush endpoints for instant mobile sync
+- the server also keeps `sync-state.json` next to `git_store` to persist registered UnifiedPush endpoints and the server's generated VAPID keypair for instant mobile sync
 
 ## Sync-Local Client Configuration
 
@@ -102,13 +102,14 @@ These endpoints use the same HTTP Basic credentials as WebDAV:
 - username: the client `id`
 - password: the matching client `password`
 
-After a successful write that advances `main`, the server sends a best-effort `POST` with
-`{"event":"branch-updated"}` to every registered endpoint URL. Delivery runs in the
-background with a short timeout, so the uploading client does not wait for push fan-out.
+After a successful write that advances `main`, the server sends a best-effort VAPID-signed
+web push wakeup request to every registered endpoint URL. Delivery runs in the background
+with a short timeout, so the uploading client does not wait for push fan-out.
 
 Endpoint registrations are stored in `sync-state.json`, pruned if they have not been
 refreshed for 14 days, and removed automatically if the push provider responds with `404`
-or `410`.
+or `410`. The server also generates a VAPID keypair on startup and stores it in the same
+state file if one does not already exist.
 
 ## Local File Sync
 

@@ -4,7 +4,7 @@ use chrono::Utc;
 use eyre::Result;
 use reqwest::Client;
 use tokio::time::timeout;
-use tracing::warn;
+use tracing::{debug, warn};
 use web_push::{
     request_builder, ContentEncoding, SubscriptionInfo, Urgency, VapidSignatureBuilder,
     WebPushMessageBuilder,
@@ -180,7 +180,12 @@ impl AppState {
                     client_id,
                     subscription,
                 }),
-                PushDeliveryResult::Delivered => {}
+                PushDeliveryResult::Delivered => {
+                    debug!(
+                        "push delivery to '{}' for client '{}' succeeded",
+                        subscription.endpoint, client_id
+                    );
+                }
                 PushDeliveryResult::Failed(err) => {
                     warn!(
                         "push delivery to '{}' for client '{}' failed: {}",

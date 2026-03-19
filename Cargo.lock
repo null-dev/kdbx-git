@@ -2691,7 +2691,7 @@ dependencies = [
 [[package]]
 name = "keepass"
 version = "0.0.0-placeholder-version"
-source = "git+https://github.com/null-dev/keepass-nd#68319d0da90c1eb33a9e0081e8ea2f8bbbda3e2f"
+source = "git+https://github.com/null-dev/keepass-nd#4d3c2646c0dff76809cf75a21dd06be50e3777f7"
 dependencies = [
  "aes 0.8.4",
  "base64 0.22.1",

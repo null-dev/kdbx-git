@@ -46,16 +46,6 @@ Notes:
 - `git_store` is a bare repo, so inspect it with commands like `git --git-dir ./store.git log --stat main`.
 - the server also keeps `sync-state.json` next to `git_store` to persist registered UnifiedPush subscriptions and the server's generated VAPID keypair for instant mobile sync
 
-## Sync-Local Client Configuration
-
-Create a separate client config for each `sync-local` instance:
-
-```toml
-server_url = "http://127.0.0.1:8080"
-client_id = "laptop"
-password = "laptop-webdav-password"
-```
-
 ## Usage
 
 Import an existing KDBX file into the git store:
@@ -83,6 +73,16 @@ Point each client at its own WebDAV file:
 The database's master password/key file is still the KDBX master credential from the server config's `[database]` section.
 
 ### 2. Local file sync with `sync-local`
+
+If you want `kdbx-git` to keep a normal local `.kdbx` file in sync for you, use the bundled `kdbx-git-sync-local` client.
+
+Create a separate client config for each `sync-local` instance:
+
+```toml
+server_url = "http://127.0.0.1:8080"
+client_id = "laptop"
+password = "laptop-webdav-password"
+```
 
 Keep a local file in sync with a client branch through the running server:
 

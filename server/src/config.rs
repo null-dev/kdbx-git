@@ -8,6 +8,11 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     /// Path to the bare git repository used for storage.
     pub git_store: PathBuf,
+    /// Optional path to the JSON sync state file used for push subscriptions
+    /// and the server VAPID keypair.
+    ///
+    /// Defaults to `sync-state.json` next to `git_store`.
+    pub sync_state_path: Option<PathBuf>,
     /// HTTP bind address, e.g. `"0.0.0.0:8080"`.
     pub bind_addr: String,
     /// Credentials used to open and save the KDBX database.
@@ -39,6 +44,15 @@ impl Config {
         let contents = std::fs::read_to_string(path)?;
         let config: Config = toml::from_str(&contents)?;
         Ok(config)
+    }
+
+    pub fn resolved_sync_state_path(&self) -> PathBuf {
+        self.sync_state_path.clone().unwrap_or_else(|| {
+            self.git_store
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join("sync-state.json")
+        })
     }
 }
 

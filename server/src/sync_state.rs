@@ -2,7 +2,7 @@ use std::{
     collections::BTreeMap,
     fs::OpenOptions,
     io::Write,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -70,23 +70,12 @@ pub(crate) struct SyncStateStore {
 }
 
 impl SyncStateStore {
-    pub(crate) fn for_git_store(git_store: &Path) -> Self {
-        let parent = git_store
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
-        Self {
-            path: parent.join(SYNC_STATE_FILE_NAME),
-        }
-    }
-
-    #[cfg(test)]
     pub(crate) fn new(path: PathBuf) -> Self {
         Self { path }
     }
 
     #[cfg(test)]
-    pub(crate) fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &std::path::Path {
         &self.path
     }
 

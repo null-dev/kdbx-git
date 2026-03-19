@@ -327,6 +327,7 @@ mod tests {
         let tempdir = TempDir::new().unwrap();
         let config = Config {
             git_store: tempdir.path().join("store.git"),
+            sync_state_path: None,
             bind_addr: "127.0.0.1:0".into(),
             database: DatabaseCredentials {
                 password: Some("test-password".into()),

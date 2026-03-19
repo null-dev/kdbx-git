@@ -244,7 +244,7 @@ struct RemoteSyncer {
 
 impl RemoteSyncer {
     fn new(config: Config, http: Client, base_url: String, options: SyncLocalOptions) -> Self {
-        let state_path = PathBuf::from(format!("{}.sync-state.json", options.local_path.display()));
+        let state_path = config.sync_state_path_for(&options.local_path);
         Self {
             config,
             http,
@@ -297,6 +297,12 @@ impl RemoteSyncer {
                 return;
             }
         };
+        if let Some(parent) = self.state_path.parent() {
+            if let Err(e) = fs::create_dir_all(parent).await {
+                warn!("sync-local: failed to create state file directory: {e}");
+                return;
+            }
+        }
         if let Err(e) = fs::write(&self.state_path, text).await {
             warn!("sync-local: failed to write state file: {e}");
         }

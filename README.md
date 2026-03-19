@@ -25,6 +25,7 @@ Create a `config.toml` like this:
 
 ```toml
 git_store = "./store.git"
+# sync_state_path = "./sync-state.json"
 bind_addr = "0.0.0.0:8080"
 
 [database]
@@ -44,7 +45,7 @@ Notes:
 
 - `database.password` / `database.keyfile` are the master credentials used to decrypt uploads and re-encrypt downloads.
 - `git_store` is a bare repo, so inspect it with commands like `git --git-dir ./store.git log --stat main`.
-- the server also keeps `sync-state.json` next to `git_store` to persist registered UnifiedPush subscriptions and the server's generated VAPID keypair for instant mobile sync
+- `sync_state_path` optionally overrides where the server stores its sync state. If omitted, it defaults to `sync-state.json` next to `git_store`.
 
 ## Usage
 
@@ -82,6 +83,7 @@ Create a separate client config for each `sync-local` instance:
 server_url = "http://127.0.0.1:8080"
 client_id = "laptop"
 password = "laptop-webdav-password"
+# sync_state_path = "./laptop.sync-state.json"
 ```
 
 Keep a local file in sync with a client branch through the running server:
@@ -101,6 +103,8 @@ Examples:
 # Pull or push once, then exit
 cargo run -p kdbx-git-sync-local -- --config client.toml --once ./laptop.kdbx
 ```
+
+`sync_state_path` optionally overrides where `kdbx-git-sync-local` stores its interrupt-recovery state JSON. If omitted, it defaults to `<local_path>.sync-state.json`.
 
 ### 3. Android mobile app
 

@@ -67,6 +67,7 @@ pub fn test_credentials() -> DatabaseCredentials {
 pub fn test_config(root: &Path) -> Config {
     Config {
         git_store: root.join("store.git"),
+        sync_state_path: None,
         bind_addr: "127.0.0.1:0".to_string(),
         database: test_credentials(),
         clients: vec![
@@ -87,11 +88,7 @@ pub fn test_config(root: &Path) -> Config {
 }
 
 pub fn sync_state_path(config: &Config) -> PathBuf {
-    config
-        .git_store
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("sync-state.json")
+    config.resolved_sync_state_path()
 }
 
 pub fn sample_db(name: &str, title: &str) -> StorageDatabase {
@@ -257,6 +254,7 @@ pub fn sync_local_config(server: &Config, client_id: &str, server_url: String) -
         server_url,
         client_id: client.id.clone(),
         password: client.password.clone(),
+        sync_state_path: None,
     }
 }
 

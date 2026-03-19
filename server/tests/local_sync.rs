@@ -354,19 +354,22 @@ fn sync_state_path(local_path: &Path) -> std::path::PathBuf {
 }
 
 async fn load_sync_state(local_path: &Path) -> TestSyncState {
-    let text = tokio::fs::read_to_string(sync_state_path(local_path))
-        .await
-        .unwrap();
+    load_sync_state_at(&sync_state_path(local_path)).await
+}
+
+async fn load_sync_state_at(path: &Path) -> TestSyncState {
+    let text = tokio::fs::read_to_string(path).await.unwrap();
     serde_json::from_str(&text).unwrap()
 }
 
 async fn write_sync_state(local_path: &Path, state: &TestSyncState) {
-    tokio::fs::write(
-        sync_state_path(local_path),
-        serde_json::to_vec(state).unwrap(),
-    )
-    .await
-    .unwrap();
+    write_sync_state_at(&sync_state_path(local_path), state).await;
+}
+
+async fn write_sync_state_at(path: &Path, state: &TestSyncState) {
+    tokio::fs::write(path, serde_json::to_vec(state).unwrap())
+        .await
+        .unwrap();
 }
 
 async fn request_pending_promote(client: &Client, base_url: &str) -> (Vec<u8>, TestPendingPromote) {
@@ -1782,6 +1785,74 @@ async fn sync_local_persists_pending_promote_state_before_promote_completes() {
     let local_bytes = tokio::fs::read(&local_path).await.unwrap();
     let local_db = parse_kdbx_bytes(&local_bytes, &config.database);
     assert!(entry_titles(&local_db).contains(&"Bob Entry".to_string()));
+
+    let _ = sync_process.kill();
+    let _ = sync_process.wait();
+}
+
+#[tokio::test]
+async fn sync_local_uses_configured_sync_state_path() {
+    let tempdir = TempDir::new().unwrap();
+    let config = test_config(tempdir.path());
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let proxy = ProxyServer::start_with_options(
+        server.base_url.clone(),
+        ProxyOptions {
+            alice_promote_status: Some(HttpStatusCode::INTERNAL_SERVER_ERROR),
+            ..ProxyOptions::default()
+        },
+    )
+    .await;
+    let client = Client::new();
+    let local_path = server.temp_root().join("alice-local.kdbx");
+    let default_state_path = sync_state_path(&local_path);
+    let custom_state_path = server
+        .temp_root()
+        .join("sync-state")
+        .join("alice-custom-state.json");
+    let config_path = server.temp_root().join("config.toml");
+    let mut sync_config = sync_local_config(&config, "alice", proxy.base_url.clone());
+    sync_config.sync_state_path = Some(custom_state_path.clone());
+    write_sync_local_config(&config_path, &sync_config);
+
+    let bob_db = sample_db("Recovery DB", "Bob Entry");
+    let put = authed(
+        &client,
+        "bob",
+        "bob-pass",
+        reqwest::Method::PUT,
+        &format!("{}/dav/bob/database.kdbx", server.base_url),
+    )
+    .body(build_kdbx_bytes(&bob_db, &config.database))
+    .send()
+    .await
+    .unwrap();
+    assert!(put.status().is_success());
+
+    let mut sync_process = spawn_sync_process(&config_path, &local_path);
+
+    wait_for_with_message("custom pending promote state file was not persisted", || {
+        let custom_state_path = custom_state_path.clone();
+        async move {
+            tokio::fs::try_exists(&custom_state_path)
+                .await
+                .unwrap_or(false)
+        }
+    })
+    .await;
+
+    assert!(
+        !tokio::fs::try_exists(&default_state_path)
+            .await
+            .unwrap_or(false),
+        "default state path should remain unused when config overrides it"
+    );
+
+    let state = load_sync_state_at(&custom_state_path).await;
+    let pending = state
+        .pending_promote
+        .expect("pending promote should be persisted");
+    assert!(!pending.commit_id.is_empty());
 
     let _ = sync_process.kill();
     let _ = sync_process.wait();

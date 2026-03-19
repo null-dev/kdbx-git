@@ -63,6 +63,26 @@ async fn server_startup_creates_vapid_keypair_in_sync_state() {
 }
 
 #[tokio::test]
+async fn server_uses_configured_sync_state_path() {
+    let tempdir = TempDir::new().unwrap();
+    let mut config = test_config(tempdir.path());
+    let default_sync_state_path = common::sync_state_path(&config);
+    let custom_sync_state_path = tempdir.path().join("state").join("push-state.json");
+    config.sync_state_path = Some(custom_sync_state_path.clone());
+
+    let _server = TestServer::start(config.clone(), tempdir).await.unwrap();
+
+    assert!(
+        !default_sync_state_path.exists(),
+        "default sync state path should remain unused when config overrides it"
+    );
+    let state = read_push_state(&common::sync_state_path(&config));
+    let vapid = state.vapid.expect("expected VAPID keys on startup");
+    assert!(!vapid.private_key.is_empty());
+    assert!(!vapid.public_key.is_empty());
+}
+
+#[tokio::test]
 async fn get_vapid_public_key_returns_persisted_key() {
     let tempdir = TempDir::new().unwrap();
     let config = test_config(tempdir.path());

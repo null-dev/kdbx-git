@@ -34,7 +34,7 @@ impl AppState {
         store: GitStore,
         push_delivery: Arc<dyn PushDelivery>,
     ) -> Result<Self> {
-        let sync_state_store = SyncStateStore::for_git_store(&config.git_store);
+        let sync_state_store = SyncStateStore::new(config.resolved_sync_state_path());
         let vapid_keys = sync_state_store.ensure_vapid_keys()?;
         let mut branch_notifications: HashMap<String, watch::Sender<u64>> = config
             .clients

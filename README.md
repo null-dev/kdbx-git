@@ -1,6 +1,14 @@
 # kdbx-git
 
-`kdbx-git` is a small WebDAV server and local sync tool that lets multiple KeePass clients share one KDBX database while storing every revision in a bare git repository.
+`kdbx-git` is a small sync server for KeePass databases that stores every revision in a bare git repository.
+
+There are three main ways to use the server:
+
+- through the WebDAV endpoint from KeePass clients that can open a remote database directly
+- through the bundled `kdbx-git-sync-local` CLI, which keeps a local `.kdbx` file in sync with one client branch
+- through the Android companion app, [kdbx-git Android](https://github.com/null-dev/kdbx-git-android), which exposes the synced database to Android KeePass apps through the Storage Access Framework
+
+All three use the same per-client branch model on the server, so you can mix them freely across devices.
 
 Each client gets its own branch and WebDAV credentials:
 
@@ -62,6 +70,20 @@ Start the server:
 cargo run -p kdbx-git -- --config config.toml
 ```
 
+Once the server is running, you can connect to it in any of the following ways.
+
+### 1. WebDAV clients
+
+Point each client at its own WebDAV file:
+
+- URL: `http://HOST:8080/dav/<client-id>/database.kdbx`
+- username: the client `id`
+- password: the matching client `password`
+
+The database's master password/key file is still the KDBX master credential from the server config's `[database]` section.
+
+### 2. Local file sync with `sync-local`
+
 Keep a local file in sync with a client branch through the running server:
 
 ```bash
@@ -80,15 +102,15 @@ Examples:
 cargo run -p kdbx-git-sync-local -- --config client.toml --once ./laptop.kdbx
 ```
 
-## KeePass Client Setup
+### 3. Android mobile app
 
-Point each client at its own WebDAV file:
+Android users can use the companion app, [kdbx-git Android](https://github.com/null-dev/kdbx-git-android), instead of mounting WebDAV directly.
 
-- URL: `http://HOST:8080/dav/<client-id>/database.kdbx`
-- username: the client `id`
-- password: the matching client `password`
+- it syncs with the same server using the same client `id` and `password`
+- it exposes the synced database as a local file through Android's Storage Access Framework
+- it can receive instant updates via UnifiedPush, with FCM fallback when available
 
-The database's master password/key file is still the KDBX master credential from the server config's `[database]` section.
+For Android-side setup details, see the app README: <https://github.com/null-dev/kdbx-git-android>.
 
 ## Instant Sync For Mobile Clients
 
@@ -123,7 +145,7 @@ refreshed for 14 days, and removed automatically if the push provider responds w
 or `410`. The server also generates a VAPID keypair on startup and stores it in the same
 state file if one does not already exist.
 
-## Local File Sync
+## Local File Sync Details
 
 `kdbx-git-sync-local` keeps a local `.kdbx` file and a single client branch in sync through the server:
 

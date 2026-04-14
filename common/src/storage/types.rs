@@ -103,8 +103,8 @@ pub struct StorageMeta {
     pub entry_templates_group_changed: Option<String>,
     pub last_selected_group: Option<String>,
     pub last_top_visible_group: Option<String>,
-    pub history_max_items: Option<usize>,
-    pub history_max_size: Option<usize>,
+    pub history_max_items: Option<isize>,
+    pub history_max_size: Option<isize>,
     pub settings_changed: Option<String>,
     pub custom_data: BTreeMap<String, StorageCustomDataItem>,
 }

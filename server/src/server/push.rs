@@ -245,7 +245,6 @@ fn trim_log_body(body: String) -> Option<String> {
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 
-    use chrono::TimeZone;
     use http::StatusCode;
     use tempfile::TempDir;
     use tokio::{
@@ -343,7 +342,7 @@ mod tests {
         ]));
         let state =
             AppState::new_with_push_delivery(config.clone(), store, delivery.clone()).unwrap();
-        let now = Utc.with_ymd_and_hms(2026, 3, 18, 12, 0, 0).unwrap();
+        let now = Utc::now();
 
         {
             let push_state = state.push_state.lock().await;

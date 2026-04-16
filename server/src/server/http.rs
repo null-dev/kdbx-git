@@ -30,6 +30,7 @@ use crate::{
 use super::{
     auth::{auth_middleware, authed_client_id, AuthedClientId},
     dav::KdbxFs,
+    keegate::{build_keegate_router, log_startup_warnings},
     state::AppState,
 };
 
@@ -314,7 +315,7 @@ pub(super) async fn delete_push_endpoint_handler(
 }
 
 pub fn build_app(state: AppState) -> Router {
-    Router::new()
+    let authed_routes = Router::new()
         .route("/dav/{*path}", any(dav_handler))
         .route("/dav", any(dav_handler))
         .route("/dav/", any(dav_handler))
@@ -338,11 +339,17 @@ pub fn build_app(state: AppState) -> Router {
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
-        ))
+        ));
+
+    Router::new()
+        .merge(build_keegate_router())
+        .merge(authed_routes)
         .with_state(state)
 }
 
 pub async fn serve_listener(listener: tokio::net::TcpListener, state: AppState) -> Result<()> {
+    log_startup_warnings(&state).await;
+
     axum::serve(listener, build_app(state))
         .await
         .wrap_err("server error")?;

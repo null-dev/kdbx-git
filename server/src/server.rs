@@ -25,6 +25,7 @@
 mod auth;
 mod dav;
 mod http;
+mod keegate;
 mod push;
 mod state;
 

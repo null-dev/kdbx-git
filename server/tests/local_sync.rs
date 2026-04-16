@@ -1831,14 +1831,17 @@ async fn sync_local_uses_configured_sync_state_path() {
 
     let mut sync_process = spawn_sync_process(&config_path, &local_path);
 
-    wait_for_with_message("custom pending promote state file was not persisted", || {
-        let custom_state_path = custom_state_path.clone();
-        async move {
-            tokio::fs::try_exists(&custom_state_path)
-                .await
-                .unwrap_or(false)
-        }
-    })
+    wait_for_with_message(
+        "custom pending promote state file was not persisted",
+        || {
+            let custom_state_path = custom_state_path.clone();
+            async move {
+                tokio::fs::try_exists(&custom_state_path)
+                    .await
+                    .unwrap_or(false)
+            }
+        },
+    )
     .await;
 
     assert!(

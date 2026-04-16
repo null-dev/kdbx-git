@@ -459,6 +459,8 @@ fn replace_main_with_corrupt_commit(git_dir: &Path, parent: &str) {
 
 #[path = "end_to_end/integrity.rs"]
 mod integrity;
+#[path = "end_to_end/keegate.rs"]
+mod keegate;
 #[path = "end_to_end/push.rs"]
 mod push;
 #[path = "end_to_end/sync.rs"]

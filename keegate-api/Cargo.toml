@@ -1,0 +1,15 @@
+[package]
+name = "kdbx-git-keegate-api"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+eyre.workspace = true
+regex.workspace = true
+serde.workspace = true
+uuid.workspace = true
+
+kdbx-git-common.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

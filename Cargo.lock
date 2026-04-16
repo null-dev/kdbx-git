@@ -2652,6 +2652,7 @@ dependencies = [
  "http 1.4.0",
  "jwt-simple",
  "kdbx-git-common",
+ "kdbx-git-keegate-api",
  "kdbx-git-sync-local",
  "keepass",
  "reqwest",
@@ -2682,6 +2683,18 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "kdbx-git-keegate-api"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "kdbx-git-common",
+ "regex",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 

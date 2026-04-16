@@ -26,6 +26,7 @@ tracing-subscriber.workspace = true
 web-push.workspace = true
 
 kdbx-git-common.workspace = true
+kdbx-git-keegate-api.workspace = true
 
 [dev-dependencies]
 axum.workspace = true

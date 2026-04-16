@@ -1,9 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    fs::OpenOptions,
-    io::Write,
-    path::PathBuf,
-};
+use std::{collections::BTreeMap, fs::OpenOptions, io::Write, path::PathBuf};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::{DateTime, Duration, Utc};

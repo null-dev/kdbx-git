@@ -1,12 +1,15 @@
 use axum::{
     body::Bytes,
     extract::State,
-    http::{header, HeaderMap, StatusCode},
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
-use base64::{engine::general_purpose::STANDARD as B64_STANDARD, Engine};
+use axum_extra::{
+    headers::{authorization::Basic, Authorization},
+    TypedHeader,
+};
 use eyre::{eyre, Result};
 use kdbx_git_keegate_api::{
     authenticate, query_entries, startup_warnings, AuthError, QueryEntriesRequest, BASIC_AUTH_REALM,
@@ -68,12 +71,14 @@ async fn info_handler() -> impl IntoResponse {
 
 async fn query_entries_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    auth: Option<TypedHeader<Authorization<Basic>>>,
     body: Bytes,
 ) -> Response {
-    let Some((username, password)) = parse_basic_credentials(&headers) else {
+    let Some(TypedHeader(auth)) = auth else {
         return unauthorized_response();
     };
+    let username = auth.username().to_owned();
+    let password = auth.password().to_owned();
 
     let request: QueryEntriesRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
@@ -116,20 +121,6 @@ async fn load_main_database(
         .await?
         .ok_or_else(|| eyre!("main branch does not exist"))?;
     Ok(db)
-}
-
-fn parse_basic_credentials(headers: &HeaderMap) -> Option<(String, String)> {
-    let creds = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Basic "))
-        .and_then(|value| B64_STANDARD.decode(value).ok())
-        .and_then(|bytes| String::from_utf8(bytes).ok());
-
-    creds.and_then(|decoded| {
-        let (username, password) = decoded.split_once(':')?;
-        Some((username.to_owned(), password.to_owned()))
-    })
 }
 
 fn unauthorized_response() -> Response {

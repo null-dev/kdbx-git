@@ -45,6 +45,20 @@ Each entry directly inside `KeeGate Users` defines one API user:
 
 The user may access any other entry in the database whose tags intersect with the user's tags.
 
+### Separate Authentication Domain
+
+KeeGate API auth must be fully separate from the server's existing HTTP auth used for WebDAV, sync, and push endpoints.
+
+That means:
+
+- no reuse of the existing path-derived client auth flow
+- no reuse of `config.toml` client credentials
+- no requirement that an API username match any configured server client ID
+- no path structure like `/api/<client-id>/...`
+- no shared auth middleware or auth helper that assumes WebDAV client semantics
+
+The only source of truth for KeeGate API authentication is the `KeeGate Users` group inside the database.
+
 ## Access Control Model
 
 ### User Discovery
@@ -93,6 +107,7 @@ Notes:
 - if multiple `KeeGate Users` entries share the same username, authentication should fail closed with `401 Unauthorized` and log a warning
 - if the username or password field is missing on a user entry, that entry is ignored and a warning should be logged
 - if `KeeGate Users` does not exist, every API auth attempt returns `401 Unauthorized`
+- this authentication flow is independent from WebDAV client auth even if both use the HTTP Basic Auth header format
 
 ### Authorization
 
@@ -487,7 +502,14 @@ Suggested handlers:
 
 ### Authentication Middleware
 
-Do not reuse the existing path-derived client auth as-is, because API users are stored in the database rather than in `config.toml`.
+Create a dedicated KeeGate API auth layer. Do not share the existing WebDAV/sync/push auth middleware, request extension types, or config-backed credential checks.
+
+In particular, the API auth layer must not:
+
+- inspect the request path for a client ID
+- depend on `config.toml` `clients`
+- inject or consume the existing authenticated client request extension
+- assume branch-oriented client identities
 
 Instead, add separate API auth middleware that:
 
@@ -504,6 +526,8 @@ struct AuthedApiUser {
     tags: BTreeSet<String>,
 }
 ```
+
+This should remain a separate type from any existing HTTP auth identity struct so the two auth systems cannot be mixed accidentally.
 
 ### Query Engine
 

@@ -25,7 +25,7 @@ This initial API should not:
 
 The server will expose a new versioned API namespace:
 
-- `/api/v1/...`
+- `/api/v1/keegate/...`
 
 The API will be served by the existing `axum` server alongside:
 
@@ -129,7 +129,7 @@ Additional rules:
 
 ### 1. Health / Capability Endpoint
 
-`GET /api/v1/info`
+`GET /api/v1/keegate/info`
 
 Purpose:
 
@@ -161,7 +161,7 @@ Example response:
 
 ### 2. Search Endpoint
 
-`POST /api/v1/entries/query`
+`POST /api/v1/keegate/entries/query`
 
 Purpose:
 
@@ -182,11 +182,11 @@ Why `POST`:
 
 These are optional and can be added later if desired, but are not required for v1:
 
-- `GET /api/v1/entries/by-uuid/{uuid}`
-- `GET /api/v1/entries/search?title_contains=...`
-- `GET /api/v1/entries/search?tag=...`
+- `GET /api/v1/keegate/entries/by-uuid/{uuid}`
+- `GET /api/v1/keegate/entries/search?title_contains=...`
+- `GET /api/v1/keegate/entries/search?tag=...`
 
-The core design should be built around `POST /api/v1/entries/query`, since it already covers every required search mode.
+The core design should be built around `POST /api/v1/keegate/entries/query`, since it already covers every required search mode.
 
 ## Query Language
 
@@ -207,8 +207,7 @@ The core design should be built around `POST /api/v1/entries/query`, since it al
     ]
   },
   "options": {
-    "limit": 100,
-    "include_fields": ["title", "username", "password", "url", "notes", "tags", "uuid"]
+    "limit": 100
   }
 }
 ```
@@ -309,7 +308,7 @@ Implementation note:
 
 ### Returned Fields
 
-The default v1 response should include:
+The v1 response should always include:
 
 - `uuid`
 - `title`
@@ -329,6 +328,8 @@ Field mapping from KeePass entry fields:
 - `notes` comes from the standard `Notes` field
 
 Missing fields should be returned as `null`.
+
+Field projection is not supported in v1. Clients always receive the full standard payload for each returned entry.
 
 ### Result Ordering
 
@@ -493,12 +494,12 @@ Example body:
 
 ### Routing
 
-Add a new router subtree under `/api/v1` in the existing HTTP server.
+Add a new router subtree under `/api/v1/keegate` in the existing HTTP server.
 
 Suggested handlers:
 
-- `GET /api/v1/info`
-- `POST /api/v1/entries/query`
+- `GET /api/v1/keegate/info`
+- `POST /api/v1/keegate/entries/query`
 
 ### Authentication Middleware
 
@@ -630,15 +631,15 @@ These are the main choices worth confirming during implementation:
 
 1. Whether `title_contains` should be case-insensitive, as proposed here, or exact-case.
 2. Whether tags should remain case-sensitive, as proposed here.
-3. Whether to add optional convenience `GET` endpoints in v1 or keep only the single `POST /api/v1/entries/query` endpoint.
-4. Whether to support field projection through `include_fields` in v1 or always return the full default payload.
+3. Whether to add optional convenience `GET` endpoints in v1 or keep only the single `POST /api/v1/keegate/entries/query` endpoint.
+4. Decided: field projection is not supported in v1; responses always return the full standard payload.
 
 ## Recommended v1 Scope
 
 Implement only:
 
-- `GET /api/v1/info`
-- `POST /api/v1/entries/query`
+- `GET /api/v1/keegate/info`
+- `POST /api/v1/keegate/entries/query`
 - Basic Auth against `KeeGate Users`
 - tag-intersection authorization
 - title substring, title regex, tag, and UUID filters

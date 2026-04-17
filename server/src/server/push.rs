@@ -255,7 +255,7 @@ mod tests {
     use web_push::SubscriptionKeys;
 
     use crate::{
-        config::{Config, DatabaseCredentials},
+        config::{Config, DatabaseCredentials, KeeGateApiConfig},
         store::GitStore,
         sync_state::SyncStateStore,
     };
@@ -332,6 +332,7 @@ mod tests {
                 password: Some("test-password".into()),
                 keyfile: None,
             },
+            keegate_api: KeeGateApiConfig::default(),
             clients: vec![],
         };
         let store = GitStore::open_or_init(&config.git_store).unwrap();

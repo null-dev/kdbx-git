@@ -32,6 +32,9 @@ bind_addr = "0.0.0.0:8080"
 password = "correct horse battery staple"
 # keyfile = "./database.keyx"
 
+[keegate_api]
+enabled = true
+
 [[clients]]
 id = "laptop"
 password = "laptop-webdav-password"
@@ -46,6 +49,7 @@ Notes:
 - `database.password` / `database.keyfile` are the master credentials used to decrypt uploads and re-encrypt downloads.
 - `git_store` is a bare repo, so inspect it with commands like `git --git-dir ./store.git log --stat main`.
 - `sync_state_path` optionally overrides where the server stores its sync state. If omitted, it defaults to `sync-state.json` next to `git_store`.
+- `keegate_api.enabled` defaults to `true`; set it to `false` to disable the KeeGate HTTP API routes entirely.
 
 ## Usage
 

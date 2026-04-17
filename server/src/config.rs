@@ -17,8 +17,17 @@ pub struct Config {
     pub bind_addr: String,
     /// Credentials used to open and save the KDBX database.
     pub database: DatabaseCredentials,
+    /// KeeGate API settings.
+    #[serde(default)]
+    pub keegate_api: KeeGateApiConfig,
     /// One entry per WebDAV client.
     pub clients: Vec<ClientConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct KeeGateApiConfig {
+    #[serde(default = "default_keegate_api_enabled")]
+    pub enabled: bool,
 }
 
 /// Credentials for opening/saving the server-managed KDBX database.
@@ -54,6 +63,18 @@ impl Config {
                 .join("sync-state.json")
         })
     }
+}
+
+impl Default for KeeGateApiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_keegate_api_enabled(),
+        }
+    }
+}
+
+fn default_keegate_api_enabled() -> bool {
+    true
 }
 
 impl KdbxCredentials for DatabaseCredentials {

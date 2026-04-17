@@ -75,6 +75,13 @@ fn seed_keegate_db() -> kdbx_git::storage::types::StorageDatabase {
 async fn start_seeded_server() -> TestServer {
     let tempdir = TempDir::new().unwrap();
     let config = test_config(tempdir.path());
+    start_seeded_server_with_config(tempdir, config).await
+}
+
+async fn start_seeded_server_with_config(
+    tempdir: TempDir,
+    config: kdbx_git::config::Config,
+) -> TestServer {
     let db = seed_keegate_db();
     let store = GitStore::open_or_init(&config.git_store).unwrap();
     store
@@ -100,6 +107,23 @@ async fn keegate_info_endpoint_is_public() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["name"], "KeeGate API");
     assert_eq!(body["version"], "v1");
+}
+
+#[tokio::test]
+async fn keegate_routes_are_disabled_by_config() {
+    let tempdir = TempDir::new().unwrap();
+    let mut config = test_config(tempdir.path());
+    config.keegate_api.enabled = false;
+    let server = start_seeded_server_with_config(tempdir, config).await;
+    let client = Client::new();
+
+    let response = client
+        .get(format!("{}/api/v1/keegate/info", server.base_url))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

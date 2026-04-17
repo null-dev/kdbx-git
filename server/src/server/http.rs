@@ -341,14 +341,18 @@ pub fn build_app(state: AppState) -> Router {
             auth_middleware,
         ));
 
-    Router::new()
-        .merge(build_keegate_router())
-        .merge(authed_routes)
-        .with_state(state)
+    let mut app = Router::new().merge(authed_routes);
+    if state.config.keegate_api.enabled {
+        app = app.merge(build_keegate_router());
+    }
+
+    app.with_state(state)
 }
 
 pub async fn serve_listener(listener: tokio::net::TcpListener, state: AppState) -> Result<()> {
-    log_startup_warnings(&state).await;
+    if state.config.keegate_api.enabled {
+        log_startup_warnings(&state).await;
+    }
 
     axum::serve(listener, build_app(state))
         .await

@@ -1,5 +1,5 @@
 [workspace]
-members = ["server", "common", "keegate-api", "sync-local"]
+members = ["server", "common", "keegate-api", "keegate-client", "sync-local"]
 resolver = "2"
 
 [workspace.package]
@@ -37,6 +37,7 @@ web-push = { version = "0.11.0", default-features = false }
 
 kdbx-git-common = { path = "common" }
 kdbx-git-keegate-api = { path = "keegate-api" }
+kdbx-git-keegate-client = { path = "keegate-client" }
 kdbx-git-sync-local = { path = "sync-local" }
 
 serial_test = "3"

@@ -12,29 +12,14 @@ use axum_extra::{
 };
 use eyre::{eyre, Result};
 use kdbx_git_keegate_api::{
-    authenticate, query_entries, startup_warnings, AuthError, QueryEntriesRequest, BASIC_AUTH_REALM,
+    authenticate, query_entries, startup_warnings, AuthError, KeeGateApiErrorResponse,
+    KeeGateInfoResponse, QueryEntriesRequest, BASIC_AUTH_REALM,
 };
-use serde::Serialize;
 use tracing::warn;
 
 use crate::store::MAIN_BRANCH;
 
 use super::state::AppState;
-
-#[derive(Serialize)]
-struct KeeGateInfoResponse {
-    name: &'static str,
-    version: &'static str,
-    read_only: bool,
-    authentication: &'static str,
-    query_features: [&'static str; 6],
-}
-
-#[derive(Serialize)]
-struct ErrorResponse {
-    error: &'static str,
-    message: String,
-}
 
 pub(super) fn build_keegate_router() -> Router<AppState> {
     Router::new()
@@ -61,11 +46,18 @@ pub(super) async fn log_startup_warnings(state: &AppState) {
 
 async fn info_handler() -> impl IntoResponse {
     Json(KeeGateInfoResponse {
-        name: "KeeGate API",
-        version: "v1",
+        name: "KeeGate API".into(),
+        version: "v1".into(),
         read_only: true,
-        authentication: "basic",
-        query_features: ["title_contains", "title_regex", "tag", "uuid", "and", "or"],
+        authentication: "basic".into(),
+        query_features: vec![
+            "title_contains".into(),
+            "title_regex".into(),
+            "tag".into(),
+            "uuid".into(),
+            "and".into(),
+            "or".into(),
+        ],
     })
 }
 
@@ -138,7 +130,10 @@ fn basic_auth_challenge() -> String {
 fn bad_request_response(error: &'static str, message: String) -> Response {
     (
         StatusCode::BAD_REQUEST,
-        Json(ErrorResponse { error, message }),
+        Json(KeeGateApiErrorResponse {
+            error: error.to_string(),
+            message,
+        }),
     )
         .into_response()
 }
@@ -146,8 +141,8 @@ fn bad_request_response(error: &'static str, message: String) -> Response {
 fn internal_error_response(message: &str) -> Response {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse {
-            error: "internal_error",
+        Json(KeeGateApiErrorResponse {
+            error: "internal_error".to_string(),
             message: message.to_string(),
         }),
     )

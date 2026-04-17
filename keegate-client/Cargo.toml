@@ -1,0 +1,17 @@
+[package]
+name = "kdbx-git-keegate-client"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+http.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+kdbx-git-keegate-api.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+axum-extra.workspace = true
+tokio.workspace = true

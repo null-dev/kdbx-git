@@ -10,7 +10,7 @@ pub const BASIC_AUTH_REALM: &str = "KeeGate API";
 pub const DEFAULT_LIMIT: usize = 100;
 pub const MAX_LIMIT: usize = 1000;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QueryEntriesRequest {
     pub filter: QueryFilterRequest,
@@ -27,13 +27,13 @@ impl QueryEntriesRequest {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QueryOptionsRequest {
     pub limit: Option<usize>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum QueryFilterRequest {
     TitleContains(TitleContainsFilter),
@@ -81,37 +81,37 @@ impl QueryFilterRequest {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TitleContainsFilter {
     pub title_contains: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TitleRegexFilter {
     pub title_regex: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TagFilter {
     pub tag: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UuidFilter {
     pub uuid: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AndFilter {
     pub and: Vec<QueryFilterRequest>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OrFilter {
     pub or: Vec<QueryFilterRequest>,
@@ -189,13 +189,13 @@ impl std::fmt::Display for QueryValidationError {
 
 impl std::error::Error for QueryValidationError {}
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct QueryEntriesResponse {
     pub entries: Vec<EntryPayload>,
     pub meta: QueryMeta,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EntryPayload {
     pub uuid: String,
     pub title: Option<String>,
@@ -207,10 +207,25 @@ pub struct EntryPayload {
     pub group_path: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct QueryMeta {
     pub count: usize,
     pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KeeGateInfoResponse {
+    pub name: String,
+    pub version: String,
+    pub read_only: bool,
+    pub authentication: String,
+    pub query_features: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KeeGateApiErrorResponse {
+    pub error: String,
+    pub message: String,
 }
 
 pub fn startup_warnings(db: &StorageDatabase) -> Vec<String> {

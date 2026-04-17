@@ -2723,6 +2723,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kdbx-git-keegate-client"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "axum-extra",
+ "http 1.4.0",
+ "kdbx-git-keegate-api",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "kdbx-git-sync-local"
 version = "0.1.0"
 dependencies = [

@@ -1,6 +1,6 @@
 use axum::{
     body::Bytes,
-    extract::State,
+    extract::{rejection::QueryRejection, Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -12,9 +12,12 @@ use axum_extra::{
 };
 use eyre::{eyre, Result};
 use kdbx_git_keegate_api::{
-    authenticate, query_entries, startup_warnings, AuthError, KeeGateApiErrorResponse,
-    KeeGateInfoResponse, QueryEntriesRequest, BASIC_AUTH_REALM,
+    authenticate, query_entries, startup_warnings, AndFilter, AuthError, AuthenticatedUser,
+    KeeGateApiErrorResponse, KeeGateInfoResponse, QueryEntriesRequest, QueryEntriesResponse,
+    QueryFilterRequest, QueryOptionsRequest, TagFilter, TitleContainsFilter, TitleRegexFilter,
+    UuidFilter, ValidatedQuery, BASIC_AUTH_REALM,
 };
+use serde::Deserialize;
 use tracing::warn;
 
 use crate::store::MAIN_BRANCH;
@@ -24,6 +27,14 @@ use super::state::AppState;
 pub(super) fn build_keegate_router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/keegate/info", get(info_handler))
+        .route(
+            "/api/v1/keegate/entries/resolve/uuid/{uuid}",
+            get(resolve_uuid_handler),
+        )
+        .route(
+            "/api/v1/keegate/entries/resolve/query",
+            get(resolve_query_handler),
+        )
         .route("/api/v1/keegate/entries/query", post(query_entries_handler))
 }
 
@@ -66,12 +77,6 @@ async fn query_entries_handler(
     auth: Option<TypedHeader<Authorization<Basic>>>,
     body: Bytes,
 ) -> Response {
-    let Some(TypedHeader(auth)) = auth else {
-        return unauthorized_response();
-    };
-    let username = auth.username().to_owned();
-    let password = auth.password().to_owned();
-
     let request: QueryEntriesRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
         Err(err) => {
@@ -84,11 +89,152 @@ async fn query_entries_handler(
         Err(err) => return bad_request_response("invalid_request", err.message()),
     };
 
-    let db = match load_main_database(&state).await {
+    match execute_query(&state, auth, validated_query).await {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn resolve_uuid_handler(
+    State(state): State<AppState>,
+    auth: Option<TypedHeader<Authorization<Basic>>>,
+    Path(uuid): Path<String>,
+) -> Response {
+    let validated_query = match (QueryEntriesRequest {
+        filter: QueryFilterRequest::Uuid(UuidFilter { uuid }),
+        options: QueryOptionsRequest { limit: Some(1) },
+    })
+    .validate()
+    {
+        Ok(query) => query,
+        Err(err) => return bad_request_response("invalid_request", err.message()),
+    };
+
+    let response = match execute_query(&state, auth, validated_query).await {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
+    if response.entries.is_empty() {
+        return not_found_response("no accessible KeeGate entry matched the requested UUID");
+    }
+
+    Json(response).into_response()
+}
+
+async fn resolve_query_handler(
+    State(state): State<AppState>,
+    auth: Option<TypedHeader<Authorization<Basic>>>,
+    query: Result<Query<ResolveQueryParams>, QueryRejection>,
+) -> Response {
+    let Query(params) = match query {
+        Ok(params) => params,
+        Err(err) => {
+            return bad_request_response(
+                "invalid_request",
+                format!("invalid query parameters: {}", err.body_text()),
+            );
+        }
+    };
+
+    let request = match params.into_request() {
+        Ok(request) => request,
+        Err(message) => return bad_request_response("invalid_request", message),
+    };
+
+    let validated_query = match request.validate() {
+        Ok(query) => query,
+        Err(err) => return bad_request_response("invalid_request", err.message()),
+    };
+
+    match execute_query(&state, auth, validated_query).await {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResolveQueryParams {
+    #[serde(default)]
+    title_contains: Option<String>,
+    #[serde(default)]
+    title_regex: Option<String>,
+    #[serde(default)]
+    tag: Option<String>,
+    #[serde(default)]
+    uuid: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+impl ResolveQueryParams {
+    fn into_request(self) -> std::result::Result<QueryEntriesRequest, String> {
+        let mut filters = Vec::new();
+
+        if let Some(title_contains) = self.title_contains {
+            filters.push(QueryFilterRequest::TitleContains(TitleContainsFilter {
+                title_contains,
+            }));
+        }
+        if let Some(title_regex) = self.title_regex {
+            filters.push(QueryFilterRequest::TitleRegex(TitleRegexFilter {
+                title_regex,
+            }));
+        }
+        if let Some(tag) = self.tag {
+            filters.push(QueryFilterRequest::Tag(TagFilter { tag }));
+        }
+        if let Some(uuid) = self.uuid {
+            filters.push(QueryFilterRequest::Uuid(UuidFilter { uuid }));
+        }
+
+        let filter = match filters.len() {
+            0 => return Err(
+                "resolve query requires at least one of: title_contains, title_regex, tag, uuid"
+                    .to_string(),
+            ),
+            1 => filters.pop().expect("single filter must exist"),
+            _ => QueryFilterRequest::And(AndFilter { and: filters }),
+        };
+
+        Ok(QueryEntriesRequest {
+            filter,
+            options: QueryOptionsRequest { limit: self.limit },
+        })
+    }
+}
+
+async fn execute_query(
+    state: &AppState,
+    auth: Option<TypedHeader<Authorization<Basic>>>,
+    validated_query: ValidatedQuery,
+) -> std::result::Result<QueryEntriesResponse, Response> {
+    let (db, user) = authenticate_request(state, auth).await?;
+    Ok(query_entries(&db, &user, &validated_query))
+}
+
+async fn authenticate_request(
+    state: &AppState,
+    auth: Option<TypedHeader<Authorization<Basic>>>,
+) -> std::result::Result<
+    (
+        kdbx_git_common::storage::types::StorageDatabase,
+        AuthenticatedUser,
+    ),
+    Response,
+> {
+    let Some(TypedHeader(auth)) = auth else {
+        return Err(unauthorized_response());
+    };
+    let username = auth.username().to_owned();
+    let password = auth.password().to_owned();
+
+    let db = match load_main_database(state).await {
         Ok(db) => db,
         Err(err) => {
             warn!("KeeGate API failed to load main database: {err:#}");
-            return internal_error_response("failed to evaluate KeeGate query");
+            return Err(internal_error_response("failed to evaluate KeeGate query"));
         }
     };
 
@@ -96,12 +242,12 @@ async fn query_entries_handler(
         Ok(user) => user,
         Err(AuthError::AmbiguousUsername) => {
             warn!("KeeGate API username '{username}' is ambiguous");
-            return unauthorized_response();
+            return Err(unauthorized_response());
         }
-        Err(AuthError::InvalidCredentials) => return unauthorized_response(),
+        Err(AuthError::InvalidCredentials) => return Err(unauthorized_response()),
     };
 
-    Json(query_entries(&db, &user, &validated_query)).into_response()
+    Ok((db, user))
 }
 
 async fn load_main_database(
@@ -133,6 +279,17 @@ fn bad_request_response(error: &'static str, message: String) -> Response {
         Json(KeeGateApiErrorResponse {
             error: error.to_string(),
             message,
+        }),
+    )
+        .into_response()
+}
+
+fn not_found_response(message: &str) -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(KeeGateApiErrorResponse {
+            error: "not_found".to_string(),
+            message: message.to_string(),
         }),
     )
         .into_response()

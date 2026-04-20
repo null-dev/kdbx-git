@@ -215,6 +215,100 @@ async fn keegate_query_filters_and_authorizes_entries() {
 }
 
 #[tokio::test]
+async fn keegate_resolve_uuid_returns_first_matching_entry_shape() {
+    let server = start_seeded_server().await;
+    let client = Client::new();
+
+    let response = client
+        .get(format!(
+            "{}/api/v1/keegate/entries/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e",
+            server.base_url
+        ))
+        .basic_auth("app-client", Some("app-secret"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+
+    assert_eq!(body["meta"]["count"], 1);
+    assert_eq!(body["meta"]["limit"], 1);
+    assert_eq!(body["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(body["entries"][0]["title"], "Prod Postgres");
+    assert_eq!(body["entries"][0]["username"], "db_admin");
+}
+
+#[tokio::test]
+async fn keegate_resolve_uuid_returns_not_found_for_inaccessible_entries() {
+    let server = start_seeded_server().await;
+    let client = Client::new();
+
+    let response = client
+        .get(format!(
+            "{}/api/v1/keegate/entries/resolve/uuid/22222222-2222-2222-2222-222222222222",
+            server.base_url
+        ))
+        .basic_auth("app-client", Some("app-secret"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["error"], "not_found");
+}
+
+#[tokio::test]
+async fn keegate_resolve_query_supports_get_query_filters() {
+    let server = start_seeded_server().await;
+    let client = Client::new();
+
+    let response = client
+        .get(format!(
+            "{}/api/v1/keegate/entries/resolve/query?tag=shared&title_contains=redis&limit=5",
+            server.base_url
+        ))
+        .basic_auth("app-client", Some("app-secret"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+
+    assert_eq!(body["meta"]["count"], 1);
+    assert_eq!(body["meta"]["limit"], 5);
+    assert_eq!(body["entries"][0]["title"], "Shared Redis");
+}
+
+#[tokio::test]
+async fn keegate_resolve_endpoints_require_keegate_basic_auth() {
+    let server = start_seeded_server().await;
+    let client = Client::new();
+
+    let response = client
+        .get(format!(
+            "{}/api/v1/keegate/entries/resolve/query?tag=prod",
+            server.base_url
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::WWW_AUTHENTICATE)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "Basic realm=\"KeeGate API\""
+    );
+}
+
+#[tokio::test]
 async fn keegate_query_rejects_invalid_regex() {
     let server = start_seeded_server().await;
     let client = Client::new();

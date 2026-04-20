@@ -91,6 +91,24 @@ Clients should allow the KeeGate connection string to be configured once:
 url = "kg://username:password@host"
 ```
 
+This client configuration should be standardized across implementations so a KeeGate API client can be constructed directly from configuration JSON when the host application already stores config in a JSON-compatible format.
+
+Suggested logical shape:
+
+```json
+{
+  "keegate": {
+    "url": "kg://username:password@host"
+  }
+}
+```
+
+Rust note:
+
+- Rust clients do not need to accept an untyped JSON blob as their constructor input
+- instead, the KeeGate client config should be represented as a dedicated struct that is `serde` serializable and deserializable
+- Rust applications should embed that struct inside their own top-level config structs rather than inventing a separate ad hoc config shape
+
 Then any setting or UI field that needs a KeeGate-backed secret can accept either:
 
 - a config-relative reference such as `kg:///uuid/<uuid>` or `kg:///query?...`

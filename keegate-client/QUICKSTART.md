@@ -8,7 +8,7 @@ Add the crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-kdbx-git-keegate-client = { path = "../keegate-client" }
+kdbx-git-keegate-client = { git = "https://github.com/null-dev/kdbx-git.git" }
 ```
 
 Create a serde-friendly config struct in your app and embed `KeeGateClientConfig` inside it:

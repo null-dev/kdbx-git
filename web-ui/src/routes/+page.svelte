@@ -124,8 +124,8 @@
 			<CardContent class="space-y-3 text-sm text-muted-foreground">
 				<p>Next milestones can add client details, history, push health, and the KeeGate browser.</p>
 				<div class="rounded-2xl border border-border/70 bg-secondary/60 p-4">
-					<p class="font-medium text-foreground">Option A integration</p>
-					<p class="mt-1">The built Svelte app is served by the Rust server under `/ui`.</p>
+					<p class="font-medium text-foreground">Integrated delivery</p>
+					<p class="mt-1">The built Svelte app is served directly by the Rust server under `/ui`.</p>
 				</div>
 			</CardContent>
 		</Card>

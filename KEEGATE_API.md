@@ -8,6 +8,8 @@ This API should:
 
 - authenticate clients with HTTP Basic Auth
 - authorize access based on KeePass data inside the database itself
+- support a KeeGate URL format that combines host, username, and password in one connection string
+- allow clients to resolve an entry from a single `kg://...` string without constructing JSON queries
 - allow entry lookup by title substring, title regex, tag, and UUID
 - support combining multiple search predicates with `and` and `or`
 - return only entries the authenticated user is allowed to access
@@ -58,6 +60,57 @@ That means:
 - no shared auth middleware or auth helper that assumes WebDAV client semantics
 
 The only source of truth for KeeGate API authentication is the `KeeGate Users` group inside the database.
+
+## KeeGate URL Scheme
+
+Clients should support a KeeGate-specific URL scheme that packages connection details and, optionally, an entry locator into a single string.
+
+Supported forms in v1:
+
+- base connection string: `kg://username:password@host`
+- absolute entry reference: `kg://username:password@host/uuid/<uuid>`
+- config-relative entry reference: `kg:///uuid/<uuid>`
+
+Notes:
+
+- `host` may include a port, for example `kg://alice:secret@example.com:8443`
+- if the username or password contains reserved URL characters, it must use normal percent-encoding
+- v1 only defines `/uuid/<uuid>` as a path form inside `kg://` URLs
+- `kg://` is a client-side convenience format; the server still exposes normal HTTPS endpoints
+
+### Client Config
+
+Clients should allow the KeeGate connection string to be configured once:
+
+```toml
+[keegate]
+url = "kg://username:password@host"
+```
+
+Then any setting or UI field that needs a KeeGate-backed secret can accept either:
+
+- a config-relative entry reference such as `kg:///uuid/<uuid>`
+- a fully qualified override such as `kg://username:password@host2/uuid/<uuid>`
+
+Resolution rules:
+
+1. If the value includes credentials and host, use that exact authority.
+2. If the value is `kg:///...`, load the authority from `[keegate].url`.
+3. Append the resolved path to `/api/v1/keegate/resolve`.
+4. Convert the request to HTTPS before sending it to the server.
+
+If `kg:///...` is used but `[keegate].url` is missing or invalid, the client should fail locally before making any HTTP request.
+
+Example transformations:
+
+- `kg://username:password@host/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+  becomes
+  `https://username:password@host/api/v1/keegate/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+- with `[keegate].url = "kg://username:password@host"`, `kg:///uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+  becomes
+  `https://username:password@host/api/v1/keegate/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+
+Authentication semantics do not change: the resolved HTTPS request still authenticates as standard HTTP Basic Auth against `KeeGate Users`.
 
 ## Access Control Model
 
@@ -159,7 +212,28 @@ Example response:
 }
 ```
 
-### 2. Search Endpoint
+### 2. Resolve-by-URL Endpoint
+
+`GET /api/v1/keegate/resolve/uuid/{uuid}`
+
+Purpose:
+
+- retrieve a single entry using a URL-friendly path shape
+- support clients that resolve secrets directly from `kg://...` strings
+
+Authentication:
+
+- required
+
+Semantics:
+
+- if the UUID exists and is authorized, return the entry payload
+- if the UUID does not exist, return `404 Not Found`
+- if the UUID exists but is not authorized for the authenticated user, also return `404 Not Found`
+
+This endpoint is the canonical translation target for the KeeGate URL scheme described above.
+
+### 3. Search Endpoint
 
 `POST /api/v1/keegate/entries/query`
 
@@ -178,15 +252,17 @@ Why `POST`:
 - JSON is easier to extend later
 - regex patterns are less error-prone in JSON than in URL encoding
 
-### Optional Convenience Endpoints
+### Optional Convenience Search Endpoints
 
 These are optional and can be added later if desired, but are not required for v1:
 
-- `GET /api/v1/keegate/entries/by-uuid/{uuid}`
 - `GET /api/v1/keegate/entries/search?title_contains=...`
 - `GET /api/v1/keegate/entries/search?tag=...`
 
-The core design should be built around `POST /api/v1/keegate/entries/query`, since it already covers every required search mode.
+The core design should be built around:
+
+- `GET /api/v1/keegate/resolve/uuid/{uuid}` for single-string URL resolution
+- `POST /api/v1/keegate/entries/query` for flexible structured search
 
 ## Query Language
 
@@ -281,7 +357,26 @@ Implementation note:
 
 ## Response Shape
 
-### Success Response
+### Resolve Success Response
+
+`200 OK`
+
+```json
+{
+  "entry": {
+    "uuid": "2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e",
+    "title": "Prod Postgres",
+    "username": "db_admin",
+    "password": "secret",
+    "url": "https://db.example.com",
+    "notes": "primary production database",
+    "tags": ["prod", "database"],
+    "group_path": ["Infrastructure", "Databases"]
+  }
+}
+```
+
+### Search Success Response
 
 `200 OK`
 
@@ -364,6 +459,23 @@ Response:
 
 - include `WWW-Authenticate: Basic realm="KeeGate API"`
 
+### `404 Not Found`
+
+Returned by `GET /api/v1/keegate/resolve/uuid/{uuid}` when:
+
+- the UUID does not exist
+- the UUID exists but the authenticated user is not allowed to access it
+- the UUID points to an entry in the reserved `KeeGate Users` group
+
+Example body:
+
+```json
+{
+  "error": "not_found",
+  "message": "no accessible KeeGate entry matched the requested UUID"
+}
+```
+
 ### `400 Bad Request`
 
 Returned when:
@@ -399,7 +511,32 @@ Example body:
 }
 ```
 
-## Example Queries
+## Examples
+
+### Resolve by absolute KeeGate URL
+
+`kg://username:password@host/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+
+translates to:
+
+`https://username:password@host/api/v1/keegate/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+
+### Resolve by config-relative KeeGate URL
+
+With:
+
+```toml
+[keegate]
+url = "kg://username:password@host"
+```
+
+the value:
+
+`kg:///uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+
+translates to:
+
+`https://username:password@host/api/v1/keegate/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
 
 ### Find by UUID
 
@@ -499,6 +636,7 @@ Add a new router subtree under `/api/v1/keegate` in the existing HTTP server.
 Suggested handlers:
 
 - `GET /api/v1/keegate/info`
+- `GET /api/v1/keegate/resolve/uuid/:uuid`
 - `POST /api/v1/keegate/entries/query`
 
 ### Authentication Middleware
@@ -553,6 +691,8 @@ And an evaluation function along the lines of:
 fn matches(entry: &StorageEntry, filter: &EntryFilter) -> bool
 ```
 
+For `GET /api/v1/keegate/resolve/uuid/:uuid`, the server can reuse the same entry indexing and authorization helpers while skipping the general boolean filter parser.
+
 ### Entry Traversal
 
 Implement a traversal helper that walks the KeePass group tree and yields:
@@ -604,6 +744,7 @@ The API returns passwords, so it should be documented as unsafe over plain HTTP 
 Recommendation:
 
 - use HTTPS directly or place the server behind a TLS-terminating reverse proxy
+- clients should treat `kg://username:password@host` values as secrets and redact them from logs, telemetry, and error messages
 
 ### Principle of Least Privilege
 
@@ -631,7 +772,7 @@ These are the main choices worth confirming during implementation:
 
 1. Whether `title_contains` should be case-insensitive, as proposed here, or exact-case.
 2. Whether tags should remain case-sensitive, as proposed here.
-3. Whether to add optional convenience `GET` endpoints in v1 or keep only the single `POST /api/v1/keegate/entries/query` endpoint.
+3. Whether future `kg://` path forms should support search shapes beyond `/uuid/<uuid>`.
 4. Decided: field projection is not supported in v1; responses always return the full standard payload.
 
 ## Recommended v1 Scope
@@ -639,6 +780,8 @@ These are the main choices worth confirming during implementation:
 Implement only:
 
 - `GET /api/v1/keegate/info`
+- KeeGate URL parsing for `kg://username:password@host`, `kg://username:password@host/uuid/<uuid>`, and `kg:///uuid/<uuid>`
+- `GET /api/v1/keegate/resolve/uuid/{uuid}`
 - `POST /api/v1/keegate/entries/query`
 - Basic Auth against `KeeGate Users`
 - tag-intersection authorization

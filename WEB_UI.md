@@ -114,12 +114,12 @@ The UI should feel intentional rather than default:
 
 ## Integration Model
 
-The simplest clean split is:
+The chosen integration model is Option A: separate frontend development, integrated production.
+
+The clean split is:
 
 - SvelteKit handles UI routes under `/ui`
 - Rust handles JSON and SSE routes under `/api/ui/v1/...` plus existing server APIs
-
-Possible deployment options:
 
 ### Option A: Separate frontend dev, integrated production
 
@@ -128,16 +128,14 @@ Possible deployment options:
 - serve the built assets from the Rust server
 - keep all API traffic same-origin in production
 
-This is the most practical default.
+This keeps production deployment simpler:
 
-### Option B: Frontend served by SvelteKit runtime
+- one primary server process
+- no separate Node service in production
+- same-origin cookies and API calls
+- fewer moving pieces for self-hosting
 
-- run the SvelteKit server separately
-- reverse-proxy `/api` to the Rust backend
-
-This is more flexible, but adds operational surface area.
-
-I would plan around Option A unless there is a strong reason to keep a separate Node service in production.
+Option B, with a separately hosted SvelteKit runtime, is intentionally not the target plan for now because it adds operational surface area without a clear product win for this project.
 
 ## Route Layout
 
@@ -472,6 +470,8 @@ Possible frontend-specific additions later:
 frontend_dist = "./web-ui/build"
 ```
 
+For Option A, this path is the built frontend artifact directory that the Rust server serves in production.
+
 Possible later additions:
 
 ```toml
@@ -487,7 +487,7 @@ audit_log_path = "./web-ui-audit.jsonl"
 - add `web_ui` config section
 - add admin session auth
 - scaffold `web-ui/` with `SvelteKit`, Tailwind, and `shadcn-svelte`
-- decide production integration path for built frontend assets
+- implement Option A production asset serving from the Rust server
 - add app shell, top nav, login/logout, and shared layout
 - add `/ui` dashboard shell
 

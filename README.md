@@ -47,7 +47,7 @@ password = "phone-webdav-password"
 Notes:
 
 - `database.password` / `database.keyfile` are the master credentials used to decrypt uploads and re-encrypt downloads.
-- `git_store` is a bare repo, so inspect it with commands like `git --git-dir ./store.git log --stat main`.
+- `git_store` is a bare repo, so inspect it by `cd`-ing into it and running normal git commands.
 - `sync_state_path` optionally overrides where the server stores its sync state. If omitted, it defaults to `sync-state.json` next to `git_store`.
 - `keegate_api.enabled` defaults to `true`; set it to `false` to disable the KeeGate HTTP API routes entirely.
 
@@ -163,6 +163,35 @@ state file if one does not already exist.
 - if both sides diverge, it runs the same KeePass-level merge logic and updates both sides
 
 This is useful if you want branch-backed syncing without mounting WebDAV in your desktop workflow. The SSE event stream is used by `sync-local`; UnifiedPush is the instant-sync path intended for mobile clients.
+
+## Inspecting the Password Store
+
+Because the state is stored as pretty JSON in a bare git repo, you can inspect it directly with standard git commands — no server needed.
+
+View the full history:
+
+```bash
+cd store.git
+git log --stat main
+```
+
+Inspect the current database state of a specific client:
+
+```bash
+git show <client-name>:db.json
+```
+
+Compare a client's state against `main`:
+
+```bash
+git diff main <client-name> -- db.json
+```
+
+Show what changed in a particular commit:
+
+```bash
+git show <commit-hash>
+```
 
 ## Docker
 

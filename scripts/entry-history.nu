@@ -3,6 +3,7 @@
 # Shows all commits that changed a specific KeePass entry, with diffs.
 # Usage: nu scripts/entry-history.nu "example.com"
 #        nu scripts/entry-history.nu "Work/Corp VPN" --store ./store.git
+#        nu scripts/entry-history.nu "example.com" --branch laptop
 
 def find-entry [group: record, parts: list<string>] {
     if ($parts | length) == 1 {
@@ -32,12 +33,13 @@ def entry-at-commit [git_dir: string, hash: string, entry_path: string] {
 
 def main [
     entry_path: string              # KeePass entry path, e.g. "example.com" or "Work/Corp VPN"
-    --store: string = "." # Path to the bare git store
+    --store: string = "."           # Path to the bare git store
+    --branch: string = "main"       # Branch to inspect
 ] {
     let git_dir = ($store | path expand)
 
     let commits = (
-        ^git --git-dir $git_dir log --format="%H|%aI|%s" -- db.json
+        ^git --git-dir $git_dir log --format="%H|%aI|%s" $branch -- db.json
         | lines
         | where { |l| ($l | str length) > 0 }
         | each { |l|

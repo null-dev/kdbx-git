@@ -35,6 +35,15 @@ password = "correct horse battery staple"
 [keegate_api]
 enabled = true
 
+[web_ui]
+enabled = true
+session_ttl_hours = 8
+frontend_dist = "./web-ui/build"
+
+[[web_ui.admin_users]]
+username = "admin"
+password_hash = "$argon2id$..."
+
 [[clients]]
 id = "laptop"
 password = "laptop-webdav-password"
@@ -50,6 +59,8 @@ Notes:
 - `git_store` is a bare repo, so inspect it by `cd`-ing into it and running normal git commands.
 - `sync_state_path` optionally overrides where the server stores its sync state. If omitted, it defaults to `sync-state.json` next to `git_store`.
 - `keegate_api.enabled` defaults to `true`; set it to `false` to disable the KeeGate HTTP API routes entirely.
+- `web_ui.enabled` defaults to `false`; when enabled, build the Svelte frontend in `web-ui/` and point `frontend_dist` at the generated `build/` directory.
+- `web_ui.admin_users` defines admin logins for the web UI using Argon2 password hashes.
 
 ## Usage
 
@@ -63,6 +74,20 @@ Start the server:
 
 ```bash
 cargo run -p kdbx-git -- --config config.toml
+```
+
+If you are using the web UI with the default Option A integration, build it first:
+
+```bash
+cd web-ui
+npm install
+npm run build
+```
+
+Then open:
+
+```text
+http://HOST:8080/ui
 ```
 
 Once the server is running, you can connect to it in any of the following ways.

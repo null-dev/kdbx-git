@@ -32,6 +32,9 @@ use super::{
     dav::KdbxFs,
     keegate::{build_keegate_router, log_startup_warnings},
     state::AppState,
+    web_ui::{
+        build_web_ui_api_router, web_ui_asset_handler, web_ui_index_handler,
+    },
 };
 
 pub(super) async fn dav_handler(State(state): State<AppState>, req: Request) -> impl IntoResponse {
@@ -344,6 +347,13 @@ pub fn build_app(state: AppState) -> Router {
     let mut app = Router::new().merge(authed_routes);
     if state.config.keegate_api.enabled {
         app = app.merge(build_keegate_router());
+    }
+    if state.config.web_ui.enabled {
+        app = app
+            .merge(build_web_ui_api_router())
+            .route("/ui", get(web_ui_index_handler))
+            .route("/ui/", get(web_ui_index_handler))
+            .route("/ui/{*path}", get(web_ui_asset_handler));
     }
 
     app.with_state(state)

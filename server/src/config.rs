@@ -20,6 +20,9 @@ pub struct Config {
     /// KeeGate API settings.
     #[serde(default)]
     pub keegate_api: KeeGateApiConfig,
+    /// Web UI settings.
+    #[serde(default)]
+    pub web_ui: WebUiConfig,
     /// One entry per WebDAV client.
     pub clients: Vec<ClientConfig>,
 }
@@ -28,6 +31,26 @@ pub struct Config {
 pub struct KeeGateApiConfig {
     #[serde(default = "default_keegate_api_enabled")]
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WebUiConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_web_ui_base_path")]
+    pub base_path: String,
+    #[serde(default = "default_web_ui_session_ttl_hours")]
+    pub session_ttl_hours: u64,
+    #[serde(default = "default_web_ui_frontend_dist")]
+    pub frontend_dist: PathBuf,
+    #[serde(default)]
+    pub admin_users: Vec<WebUiAdminUser>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WebUiAdminUser {
+    pub username: String,
+    pub password_hash: String,
 }
 
 /// Credentials for opening/saving the server-managed KDBX database.
@@ -73,8 +96,32 @@ impl Default for KeeGateApiConfig {
     }
 }
 
+impl Default for WebUiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_path: default_web_ui_base_path(),
+            session_ttl_hours: default_web_ui_session_ttl_hours(),
+            frontend_dist: default_web_ui_frontend_dist(),
+            admin_users: Vec::new(),
+        }
+    }
+}
+
 fn default_keegate_api_enabled() -> bool {
     true
+}
+
+fn default_web_ui_base_path() -> String {
+    "/ui".to_string()
+}
+
+fn default_web_ui_session_ttl_hours() -> u64 {
+    8
+}
+
+fn default_web_ui_frontend_dist() -> PathBuf {
+    PathBuf::from("web-ui/build")
 }
 
 impl KdbxCredentials for DatabaseCredentials {

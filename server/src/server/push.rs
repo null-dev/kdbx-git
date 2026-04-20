@@ -333,6 +333,7 @@ mod tests {
                 keyfile: None,
             },
             keegate_api: KeeGateApiConfig::default(),
+            web_ui: crate::config::WebUiConfig::default(),
             clients: vec![],
         };
         let store = GitStore::open_or_init(&config.git_store).unwrap();

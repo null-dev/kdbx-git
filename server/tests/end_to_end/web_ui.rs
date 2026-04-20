@@ -1,0 +1,146 @@
+use super::*;
+
+use argon2::Config as Argon2Config;
+use kdbx_git::config::WebUiAdminUser;
+
+fn admin_password_hash(password: &str) -> String {
+    argon2::hash_encoded(password.as_bytes(), b"web-ui-test-salt", &Argon2Config::default())
+        .unwrap()
+}
+
+fn enable_web_ui(config: &mut kdbx_git::config::Config, root: &Path) {
+    config.web_ui.enabled = true;
+    config.web_ui.frontend_dist = root.join("frontend");
+    config.web_ui.admin_users = vec![WebUiAdminUser {
+        username: "admin".into(),
+        password_hash: admin_password_hash("admin-pass"),
+    }];
+}
+
+fn write_frontend_dist(root: &Path) {
+    let dist = root.join("frontend");
+    std::fs::create_dir_all(dist.join("assets")).unwrap();
+    std::fs::write(
+        dist.join("index.html"),
+        r#"<!doctype html><html><body><div id="app">web ui shell</div></body></html>"#,
+    )
+    .unwrap();
+    std::fs::write(dist.join("assets").join("app.js"), "console.log('web-ui');").unwrap();
+}
+
+fn session_cookie(response: &reqwest::Response) -> String {
+    response
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+#[tokio::test]
+async fn web_ui_login_sets_session_cookie_and_status_requires_auth() {
+    let tempdir = TempDir::new().unwrap();
+    let mut config = test_config(tempdir.path());
+    enable_web_ui(&mut config, tempdir.path());
+    write_frontend_dist(tempdir.path());
+
+    let server = TestServer::start(config.clone(), tempdir).await.unwrap();
+    let client = Client::new();
+
+    let unauthorized = client
+        .get(format!("{}/api/ui/v1/status", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let login = client
+        .post(format!("{}/api/ui/v1/session/login", server.base_url))
+        .json(&serde_json::json!({
+            "username": "admin",
+            "password": "admin-pass"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+
+    let cookie = session_cookie(&login);
+
+    let session = client
+        .get(format!("{}/api/ui/v1/session", server.base_url))
+        .header(header::COOKIE, &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(session.status(), StatusCode::OK);
+    let session_body: serde_json::Value = session.json().await.unwrap();
+    assert_eq!(session_body["authenticated"], true);
+    assert_eq!(session_body["username"], "admin");
+
+    let status = client
+        .get(format!("{}/api/ui/v1/status", server.base_url))
+        .header(header::COOKIE, &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(status.status(), StatusCode::OK);
+    let status_body: serde_json::Value = status.json().await.unwrap();
+    assert_eq!(status_body["authenticated_username"], "admin");
+    assert_eq!(status_body["client_count"], 3);
+    assert_eq!(status_body["frontend_dist"], config.web_ui.frontend_dist.display().to_string());
+
+    let logout = client
+        .post(format!("{}/api/ui/v1/session/logout", server.base_url))
+        .header(header::COOKIE, &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(logout.status(), StatusCode::OK);
+
+    let status_after_logout = client
+        .get(format!("{}/api/ui/v1/status", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(status_after_logout.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn web_ui_serves_spa_shell_and_static_assets() {
+    let tempdir = TempDir::new().unwrap();
+    let mut config = test_config(tempdir.path());
+    enable_web_ui(&mut config, tempdir.path());
+    write_frontend_dist(tempdir.path());
+
+    let server = TestServer::start(config, tempdir).await.unwrap();
+    let client = Client::new();
+
+    let shell = client
+        .get(format!("{}/ui", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(shell.status(), StatusCode::OK);
+    assert!(shell.text().await.unwrap().contains("web ui shell"));
+
+    let nested_route = client
+        .get(format!("{}/ui/login", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(nested_route.status(), StatusCode::OK);
+    assert!(nested_route.text().await.unwrap().contains("web ui shell"));
+
+    let asset = client
+        .get(format!("{}/ui/assets/app.js", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(asset.status(), StatusCode::OK);
+    assert_eq!(asset.text().await.unwrap(), "console.log('web-ui');");
+}

@@ -28,6 +28,7 @@ mod http;
 mod keegate;
 mod push;
 mod state;
+mod web_ui;
 
 pub use http::{build_app, run_server, serve_listener};
 pub use state::AppState;

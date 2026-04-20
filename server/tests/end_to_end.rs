@@ -465,5 +465,7 @@ mod keegate;
 mod push;
 #[path = "end_to_end/sync.rs"]
 mod sync;
+#[path = "end_to_end/web_ui.rs"]
+mod web_ui;
 #[path = "end_to_end/webdav.rs"]
 mod webdav;

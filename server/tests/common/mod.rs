@@ -9,7 +9,7 @@ use std::{
 
 use color_eyre::eyre::Result;
 use kdbx_git::{
-    config::{ClientConfig, Config, DatabaseCredentials, KeeGateApiConfig},
+    config::{ClientConfig, Config, DatabaseCredentials, KeeGateApiConfig, WebUiConfig},
     kdbx::{build_kdbx_sync, parse_kdbx_sync},
     server::{serve_listener, AppState},
     storage::types::{
@@ -71,6 +71,7 @@ pub fn test_config(root: &Path) -> Config {
         bind_addr: "127.0.0.1:0".to_string(),
         database: test_credentials(),
         keegate_api: KeeGateApiConfig::default(),
+        web_ui: WebUiConfig::default(),
         clients: vec![
             ClientConfig {
                 id: "alice".into(),

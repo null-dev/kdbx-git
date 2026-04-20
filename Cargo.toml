@@ -9,11 +9,12 @@ edition = "2021"
 [workspace.dependencies]
 argon2 = { package = "rust-argon2", version = "3.0" }
 axum = "0.8"
-axum-extra = { version = "0.10", features = ["typed-header"] }
+axum-extra = { version = "0.10", features = ["typed-header", "cookie-private"] }
 base64 = "0.22"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
+cookie = "0.18"
 color-eyre = "0.6"
 dav-server = "0.11"
 eyre = "0.6"
@@ -22,6 +23,7 @@ gix = "0.70"
 http = "1"
 jwt-simple = { version = "0.12.11", default-features = false, features = ["pure-rust"] }
 keepass = { git = "https://github.com/null-dev/keepass-nd", features = ["save_kdbx4", "_merge"] }
+mime_guess = "2"
 notify = "8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
 regex = "1"

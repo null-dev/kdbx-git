@@ -1,5 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
+use axum::extract::FromRef;
+use axum_extra::extract::cookie::Key;
 use eyre::Result;
 use tokio::sync::{watch, Mutex};
 
@@ -19,6 +21,7 @@ pub struct AppState {
     pub(super) vapid_keys: Arc<VapidKeys>,
     pub(super) push_state: Arc<Mutex<SyncStateStore>>,
     pub(super) push_delivery: Arc<dyn PushDelivery>,
+    pub(super) web_ui_cookie_key: Key,
     /// Per-branch notification channels. Includes an entry for `MAIN_BRANCH`
     /// so sync-local clients can be notified when main advances.
     branch_notifications: Arc<HashMap<String, watch::Sender<u64>>>,
@@ -54,6 +57,7 @@ impl AppState {
             vapid_keys: Arc::new(vapid_keys),
             push_state: Arc::new(Mutex::new(sync_state_store)),
             push_delivery,
+            web_ui_cookie_key: Key::generate(),
             branch_notifications: Arc::new(branch_notifications),
         })
     }
@@ -83,5 +87,11 @@ impl AppState {
 impl std::fmt::Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AppState").finish_non_exhaustive()
+    }
+}
+
+impl FromRef<AppState> for Key {
+    fn from_ref(state: &AppState) -> Self {
+        state.web_ui_cookie_key.clone()
     }
 }

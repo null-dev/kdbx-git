@@ -9,7 +9,7 @@ This API should:
 - authenticate clients with HTTP Basic Auth
 - authorize access based on KeePass data inside the database itself
 - support a KeeGate URL format that combines host, username, and password in one connection string
-- allow clients to resolve an entry from a single `kg://...` string without constructing JSON queries
+- allow clients to resolve one or more entries from a single `kg://...` string without constructing JSON queries
 - allow entry lookup by title substring, title regex, tag, and UUID
 - support combining multiple search predicates with `and` and `or`
 - return only entries the authenticated user is allowed to access
@@ -68,15 +68,19 @@ Clients should support a KeeGate-specific URL scheme that packages connection de
 Supported forms in v1:
 
 - base connection string: `kg://username:password@host`
-- absolute entry reference: `kg://username:password@host/uuid/<uuid>`
-- config-relative entry reference: `kg:///uuid/<uuid>`
+- absolute UUID reference: `kg://username:password@host/uuid/<uuid>`
+- absolute query reference: `kg://username:password@host/query?...`
+- config-relative UUID reference: `kg:///uuid/<uuid>`
+- config-relative query reference: `kg:///query?...`
 
 Notes:
 
 - `host` may include a port, for example `kg://alice:secret@example.com:8443`
 - if the username or password contains reserved URL characters, it must use normal percent-encoding
-- v1 only defines `/uuid/<uuid>` as a path form inside `kg://` URLs
+- v1 defines `/uuid/<uuid>` and `/query?...` path forms inside `kg://` URLs
 - `kg://` is a client-side convenience format; the server still exposes normal HTTPS endpoints
+- clients should assume a resolved `kg://` URL may return multiple entries
+- if a client only expects one entry, it should use the first returned entry after resolution
 
 ### Client Config
 
@@ -89,15 +93,16 @@ url = "kg://username:password@host"
 
 Then any setting or UI field that needs a KeeGate-backed secret can accept either:
 
-- a config-relative entry reference such as `kg:///uuid/<uuid>`
+- a config-relative reference such as `kg:///uuid/<uuid>` or `kg:///query?...`
 - a fully qualified override such as `kg://username:password@host2/uuid/<uuid>`
 
 Resolution rules:
 
 1. If the value includes credentials and host, use that exact authority.
 2. If the value is `kg:///...`, load the authority from `[keegate].url`.
-3. Append the resolved path to `/api/v1/keegate/resolve`.
+3. Append the resolved path to `/api/v1/keegate/entries/resolve`.
 4. Convert the request to HTTPS before sending it to the server.
+5. Treat the response as a list of entries, even if the calling UI only needs one secret.
 
 If `kg:///...` is used but `[keegate].url` is missing or invalid, the client should fail locally before making any HTTP request.
 
@@ -105,10 +110,13 @@ Example transformations:
 
 - `kg://username:password@host/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
   becomes
-  `https://username:password@host/api/v1/keegate/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+  `https://username:password@host/api/v1/keegate/entries/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
 - with `[keegate].url = "kg://username:password@host"`, `kg:///uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
   becomes
-  `https://username:password@host/api/v1/keegate/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+  `https://username:password@host/api/v1/keegate/entries/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+- with `[keegate].url = "kg://username:password@host"`, `kg:///query?tag=prod`
+  becomes
+  `https://username:password@host/api/v1/keegate/entries/resolve/query?tag=prod`
 
 Authentication semantics do not change: the resolved HTTPS request still authenticates as standard HTTP Basic Auth against `KeeGate Users`.
 
@@ -212,14 +220,17 @@ Example response:
 }
 ```
 
-### 2. Resolve-by-URL Endpoint
+### 2. Resolve-by-URL Endpoints
 
-`GET /api/v1/keegate/resolve/uuid/{uuid}`
+`GET /api/v1/keegate/entries/resolve/uuid/{uuid}`
+
+`GET /api/v1/keegate/entries/resolve/query?...`
 
 Purpose:
 
-- retrieve a single entry using a URL-friendly path shape
+- resolve URL-friendly path shapes into normal entry-list responses
 - support clients that resolve secrets directly from `kg://...` strings
+- support both single-entry and multi-entry lookups through the same client URL mechanism
 
 Authentication:
 
@@ -227,11 +238,15 @@ Authentication:
 
 Semantics:
 
-- if the UUID exists and is authorized, return the entry payload
+- resolve endpoints always return the standard multi-entry response shape used for entry search
+- clients should assume a resolve URL may return multiple entries
+- when a client expects only one entry, it should use the first returned entry
+- `GET /api/v1/keegate/entries/resolve/query?...` should be handled internally as `POST /api/v1/keegate/entries/query`
+- if the UUID exists and is authorized, return a single-element `entries` array
 - if the UUID does not exist, return `404 Not Found`
 - if the UUID exists but is not authorized for the authenticated user, also return `404 Not Found`
 
-This endpoint is the canonical translation target for the KeeGate URL scheme described above.
+These endpoints are the canonical translation targets for the KeeGate URL scheme described above.
 
 ### 3. Search Endpoint
 
@@ -261,7 +276,7 @@ These are optional and can be added later if desired, but are not required for v
 
 The core design should be built around:
 
-- `GET /api/v1/keegate/resolve/uuid/{uuid}` for single-string URL resolution
+- `GET /api/v1/keegate/entries/resolve/...` for single-string URL resolution
 - `POST /api/v1/keegate/entries/query` for flexible structured search
 
 ## Query Language
@@ -357,26 +372,7 @@ Implementation note:
 
 ## Response Shape
 
-### Resolve Success Response
-
-`200 OK`
-
-```json
-{
-  "entry": {
-    "uuid": "2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e",
-    "title": "Prod Postgres",
-    "username": "db_admin",
-    "password": "secret",
-    "url": "https://db.example.com",
-    "notes": "primary production database",
-    "tags": ["prod", "database"],
-    "group_path": ["Infrastructure", "Databases"]
-  }
-}
-```
-
-### Search Success Response
+### Search And Resolve Success Response
 
 `200 OK`
 
@@ -461,7 +457,7 @@ Response:
 
 ### `404 Not Found`
 
-Returned by `GET /api/v1/keegate/resolve/uuid/{uuid}` when:
+Returned by `GET /api/v1/keegate/entries/resolve/uuid/{uuid}` when:
 
 - the UUID does not exist
 - the UUID exists but the authenticated user is not allowed to access it
@@ -519,7 +515,7 @@ Example body:
 
 translates to:
 
-`https://username:password@host/api/v1/keegate/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+`https://username:password@host/api/v1/keegate/entries/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
 
 ### Resolve by config-relative KeeGate URL
 
@@ -536,7 +532,26 @@ the value:
 
 translates to:
 
-`https://username:password@host/api/v1/keegate/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+`https://username:password@host/api/v1/keegate/entries/resolve/uuid/2f8f6e1d-3f43-4d38-9e3c-3b8bdbf19c4e`
+
+### Resolve multiple entries by query URL
+
+With:
+
+```toml
+[keegate]
+url = "kg://username:password@host"
+```
+
+the value:
+
+`kg:///query?tag=prod`
+
+translates to:
+
+`https://username:password@host/api/v1/keegate/entries/resolve/query?tag=prod`
+
+The response should use the normal `entries` array shape. If a caller only needs one entry, it should use `entries[0]`.
 
 ### Find by UUID
 
@@ -636,7 +651,8 @@ Add a new router subtree under `/api/v1/keegate` in the existing HTTP server.
 Suggested handlers:
 
 - `GET /api/v1/keegate/info`
-- `GET /api/v1/keegate/resolve/uuid/:uuid`
+- `GET /api/v1/keegate/entries/resolve/uuid/:uuid`
+- `GET /api/v1/keegate/entries/resolve/query`
 - `POST /api/v1/keegate/entries/query`
 
 ### Authentication Middleware
@@ -691,7 +707,9 @@ And an evaluation function along the lines of:
 fn matches(entry: &StorageEntry, filter: &EntryFilter) -> bool
 ```
 
-For `GET /api/v1/keegate/resolve/uuid/:uuid`, the server can reuse the same entry indexing and authorization helpers while skipping the general boolean filter parser.
+For `GET /api/v1/keegate/entries/resolve/uuid/:uuid`, the server can reuse the same entry indexing and authorization helpers while skipping the general boolean filter parser.
+
+For `GET /api/v1/keegate/entries/resolve/query`, the server should parse the URL query string into the same internal filter representation used by `POST /api/v1/keegate/entries/query`, then execute the normal query path.
 
 ### Entry Traversal
 
@@ -772,7 +790,7 @@ These are the main choices worth confirming during implementation:
 
 1. Whether `title_contains` should be case-insensitive, as proposed here, or exact-case.
 2. Whether tags should remain case-sensitive, as proposed here.
-3. Whether future `kg://` path forms should support search shapes beyond `/uuid/<uuid>`.
+3. How expressive the `/query?...` URL query-string grammar should be in v1 beyond the core supported search predicates.
 4. Decided: field projection is not supported in v1; responses always return the full standard payload.
 
 ## Recommended v1 Scope
@@ -780,8 +798,9 @@ These are the main choices worth confirming during implementation:
 Implement only:
 
 - `GET /api/v1/keegate/info`
-- KeeGate URL parsing for `kg://username:password@host`, `kg://username:password@host/uuid/<uuid>`, and `kg:///uuid/<uuid>`
-- `GET /api/v1/keegate/resolve/uuid/{uuid}`
+- KeeGate URL parsing for `kg://username:password@host`, `kg://username:password@host/uuid/<uuid>`, `kg://username:password@host/query?...`, `kg:///uuid/<uuid>`, and `kg:///query?...`
+- `GET /api/v1/keegate/entries/resolve/uuid/{uuid}`
+- `GET /api/v1/keegate/entries/resolve/query?...`
 - `POST /api/v1/keegate/entries/query`
 - Basic Auth against `KeeGate Users`
 - tag-intersection authorization

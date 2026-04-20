@@ -23,13 +23,13 @@ The best first version is an operator-focused admin UI with a path to a second, 
    - server admin access
    - per-client WebDAV/sync credentials
    - KeeGate API users stored inside the database
-5. Avoid turning this project into a heavy frontend build/deploy burden.
+5. Keep the frontend modern and pleasant to work in without letting it sprawl into an unbounded second product.
 
 ## Recommended Scope
 
 ### Phase 1: Admin UI First
 
-Start with a read-only admin UI served by the Rust server itself.
+Start with a read-only admin UI built in Svelte and backed by the Rust server's JSON APIs.
 
 This gives the most value fastest:
 
@@ -61,28 +61,87 @@ Avoid database entry editing in the first web UI iterations.
 
 ### Frontend Approach
 
-Use a server-rendered UI with small progressive enhancement instead of a full SPA first.
+Use a dedicated Svelte app, ideally `SvelteKit`, with `shadcn-svelte` as the component foundation.
 
 Recommended stack:
 
-- `axum` routes under `/ui`
-- HTML templates via `askama` or `maud`
-- small HTMX/Alpine-style interactivity for tables, filters, polling, and reveal actions
-- static CSS/JS assets served by the server
+- `SvelteKit` for routing, layouts, SSR, and page data loading
+- `shadcn-svelte` for accessible primitives and consistent UI building blocks
+- Tailwind CSS, as expected by the `shadcn-svelte` ecosystem
+- small live-update hooks for SSE-backed widgets where useful
+- the existing Rust server continuing to own the real APIs and auth/session validation
 
-Why this fits the repo:
+Recommended repo shape:
 
-- the server is already a single binary
-- there is no existing JS build pipeline
-- most screens are dashboards, tables, and detail views
-- SSE already exists and can power live updates
-- shipping one binary is simpler than introducing a Node-based app immediately
+- `server/` remains the API and core server
+- add a new `web-ui/` app for the Svelte frontend
+- in development, run the Svelte dev server separately
+- in production, build static assets or an SSR bundle and serve it behind or through the Rust server
 
-If the secret browser later becomes much richer, it can still be upgraded to a dedicated frontend app without throwing away the Phase 1 work.
+Why this fits your preference while still fitting the repo:
+
+- Svelte is a good match for dashboards and forms without a lot of boilerplate
+- `shadcn-svelte` gives the UI a strong component baseline without forcing a rigid design system
+- the server already has the API boundaries we need
+- the KeeGate browser will benefit from richer client-side interactions
+- we can still keep the product intentionally small even if the frontend stack is more modern
+
+The main tradeoff is extra frontend toolchain complexity compared with server-rendered HTML, but that seems acceptable given your stated preference.
+
+### Rendering Strategy
+
+Prefer SSR-first SvelteKit pages rather than a pure client-only SPA.
+
+That means:
+
+- route-level data loading for dashboard and detail pages
+- server-rendered initial page responses
+- client-side navigation after first load
+- selective real-time enhancement where live state matters
+
+This keeps the app fast and easier to secure while still feeling modern.
+
+### Design Direction
+
+Use `shadcn-svelte` components as primitives, not as the final product look.
+
+The UI should feel intentional rather than default:
+
+- clean, dense admin dashboards for server/operator pages
+- stronger visual separation between admin pages and KeeGate secret-browser pages
+- consistent tokens for status colors, branch/sync state, and warning severity
+- careful use of drawers, dialogs, tables, badges, cards, and command-style search
+
+## Integration Model
+
+The simplest clean split is:
+
+- SvelteKit handles UI routes under `/ui`
+- Rust handles JSON and SSE routes under `/api/ui/v1/...` plus existing server APIs
+
+Possible deployment options:
+
+### Option A: Separate frontend dev, integrated production
+
+- develop `web-ui/` with the Svelte dev server
+- build the frontend during release
+- serve the built assets from the Rust server
+- keep all API traffic same-origin in production
+
+This is the most practical default.
+
+### Option B: Frontend served by SvelteKit runtime
+
+- run the SvelteKit server separately
+- reverse-proxy `/api` to the Rust backend
+
+This is more flexible, but adds operational surface area.
+
+I would plan around Option A unless there is a strong reason to keep a separate Node service in production.
 
 ## Route Layout
 
-Suggested top-level routes:
+Suggested Svelte UI routes:
 
 - `/ui/login`
 - `/ui/`
@@ -93,7 +152,7 @@ Suggested top-level routes:
 - `/ui/keegate`
 - `/ui/settings`
 
-Suggested JSON endpoints for the UI:
+Suggested backend JSON endpoints for the UI:
 
 - `/api/ui/v1/status`
 - `/api/ui/v1/clients`
@@ -103,6 +162,18 @@ Suggested JSON endpoints for the UI:
 - `/api/ui/v1/keegate/query`
 
 Do not reuse the existing WebDAV auth middleware for UI routes.
+
+If `SvelteKit` is used, the page routes would likely live as:
+
+- `src/routes/ui/+layout.svelte`
+- `src/routes/ui/login/+page.svelte`
+- `src/routes/ui/+page.svelte`
+- `src/routes/ui/clients/+page.svelte`
+- `src/routes/ui/clients/[id]/+page.svelte`
+- `src/routes/ui/history/+page.svelte`
+- `src/routes/ui/push/+page.svelte`
+- `src/routes/ui/keegate/+page.svelte`
+- `src/routes/ui/settings/+page.svelte`
 
 ## Authentication Model
 
@@ -168,6 +239,7 @@ Nice-to-have:
 
 - live activity ticker using SSE
 - quick badges for “healthy”, “warning”, “attention needed”
+- card-based layout using `shadcn-svelte` card, badge, and table primitives
 
 ### 2. Clients Page
 
@@ -207,6 +279,7 @@ Stretch ideas:
 
 - rendered commit graph for `main` vs client branch
 - downloadable redacted diagnostic bundle
+- side panel or modal flows for support actions
 
 ### 4. History Page
 
@@ -225,6 +298,7 @@ Optional later:
 - JSON diff summaries between commits
 - branch comparison view
 - “show entries changed in this revision”
+- virtualized or paginated commit tables if the history gets large
 
 ### 5. Push Page
 
@@ -256,6 +330,7 @@ Core features:
 - entry detail drawer/page
 - copy username/password/url/notes
 - reveal password on demand
+- command-palette-style search UX for quick lookup
 
 Important guardrails:
 
@@ -328,6 +403,8 @@ Add internal/admin JSON endpoints that expose:
 
 These should not scrape HTML pages; build them as proper typed handlers.
 
+The Svelte app should consume these through typed client helpers so the frontend stays close to the Rust response models.
+
 ### Git/History Helpers
 
 Likely new helper methods on `GitStore`:
@@ -359,6 +436,8 @@ For a live dashboard, add an admin SSE endpoint that emits events when:
 - a push endpoint is registered/removed
 - a push delivery succeeds/fails
 
+On the Svelte side, use this to progressively enhance the dashboard and client detail pages instead of making every screen fully real-time.
+
 ## Security Requirements
 
 This part matters as much as the UI itself.
@@ -386,6 +465,13 @@ username = "admin"
 password_hash = "$argon2id$..."
 ```
 
+Possible frontend-specific additions later:
+
+```toml
+[web_ui]
+frontend_dist = "./web-ui/build"
+```
+
 Possible later additions:
 
 ```toml
@@ -400,8 +486,9 @@ audit_log_path = "./web-ui-audit.jsonl"
 
 - add `web_ui` config section
 - add admin session auth
-- add static asset and template support
-- add top nav, layout, login/logout
+- scaffold `web-ui/` with `SvelteKit`, Tailwind, and `shadcn-svelte`
+- decide production integration path for built frontend assets
+- add app shell, top nav, login/logout, and shared layout
 - add `/ui` dashboard shell
 
 ### Milestone 2: Read-Only Admin Dashboard
@@ -411,6 +498,7 @@ audit_log_path = "./web-ui-audit.jsonl"
 - client detail page
 - history page
 - settings/docs page
+- typed frontend API clients and shared status formatting utilities
 
 At the end of this milestone, the UI is already useful even without any write actions.
 
@@ -427,6 +515,7 @@ At the end of this milestone, the UI is already useful even without any write ac
 - search form backed by existing KeeGate query logic
 - result table and entry detail drawer/page
 - masked secret reveal/copy UX
+- polished `shadcn-svelte` search and detail components
 
 ### Milestone 5: Safe Admin Actions
 
@@ -438,7 +527,7 @@ Only add write actions that are easy to reason about and easy to audit.
 
 ## What I Would Build First
 
-If we want the best value per unit of complexity, I would start with:
+If we want the best value per unit of complexity within a Svelte-based UI, I would start with:
 
 1. `/ui/login`
 2. `/ui/` dashboard
@@ -455,7 +544,7 @@ Then I would add the KeeGate browser as a clearly separate second track.
 
 Build the web UI in two layers:
 
-- first, a lightweight admin UI for operators
+- first, a SvelteKit admin UI for operators
 - second, an optional KeeGate-powered secret browser for end users
 
-Keep it server-rendered at first, keep auth domains separate, and treat read-only observability as the MVP. That approach fits the current axum + Rust architecture, reuses the existing server capabilities well, and avoids overcommitting to a large frontend stack before the product shape is proven.
+Use `shadcn-svelte` as the component backbone, keep auth domains separate, and treat read-only observability as the MVP. That approach still fits the current axum + Rust architecture, reuses the existing server capabilities well, and gives the project a modern frontend without losing the phased, security-first rollout.

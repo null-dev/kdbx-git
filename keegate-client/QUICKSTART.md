@@ -1,5 +1,9 @@
 # `keegate-client` Quick Start
 
+`kdbx-git` stores a KeePass database in git and serves it through sync- and API-oriented tooling. KeeGate is the read-only HTTP API layer that lets applications fetch specific entry data, such as passwords or usernames, without needing direct access to the full `.kdbx` file.
+
+`keegate-client` is the Rust client for that API. It can resolve `kg://...` references like `kg:///uuid/<uuid>` and `kg:///query?...`.
+
 Add the crate to your `Cargo.toml`:
 
 ```toml

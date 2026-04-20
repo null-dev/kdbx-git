@@ -1,5 +1,6 @@
 use eyre::Result;
 use kdbx_git_common::kdbx::KdbxCredentials;
+use kdbx_git_web_ui::DEFAULT_FRONTEND_DIST;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -121,7 +122,7 @@ fn default_web_ui_session_ttl_hours() -> u64 {
 }
 
 fn default_web_ui_frontend_dist() -> PathBuf {
-    PathBuf::from("web-ui/build")
+    PathBuf::from(DEFAULT_FRONTEND_DIST)
 }
 
 impl KdbxCredentials for DatabaseCredentials {

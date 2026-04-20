@@ -7,33 +7,31 @@ use std::{
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("missing manifest dir"));
-    let workspace_root = manifest_dir
-        .parent()
-        .expect("server crate should have a workspace parent");
-    let web_ui_dir = workspace_root.join("web-ui");
 
     emit_rerun_if_changed(&manifest_dir.join("build.rs"));
-    emit_rerun_if_changed(&web_ui_dir.join("package.json"));
-    emit_rerun_if_changed(&web_ui_dir.join("package-lock.json"));
-    emit_rerun_if_changed(&web_ui_dir.join("svelte.config.js"));
-    emit_rerun_if_changed(&web_ui_dir.join("vite.config.ts"));
-    emit_rerun_if_changed(&web_ui_dir.join("tsconfig.json"));
-    emit_rerun_if_changed(&web_ui_dir.join("src"));
-    emit_rerun_if_changed(&web_ui_dir.join("static"));
+    emit_rerun_if_changed(&manifest_dir.join("Cargo.toml"));
+    emit_rerun_if_changed(&manifest_dir.join("package.json"));
+    emit_rerun_if_changed(&manifest_dir.join("package-lock.json"));
+    emit_rerun_if_changed(&manifest_dir.join("svelte.config.js"));
+    emit_rerun_if_changed(&manifest_dir.join("vite.config.ts"));
+    emit_rerun_if_changed(&manifest_dir.join("tsconfig.json"));
+    emit_rerun_if_changed(&manifest_dir.join("src"));
+    emit_rerun_if_changed(&manifest_dir.join("static"));
     println!(
         "cargo:rerun-if-changed={}",
-        web_ui_dir.join("build").join("index.html").display()
+        manifest_dir.join("build").join("index.html").display()
     );
     println!("cargo:rerun-if-env-changed=PATH");
+    println!("cargo:rerun-if-env-changed=KDBX_GIT_SKIP_WEB_UI_BUILD");
 
     if env::var_os("KDBX_GIT_SKIP_WEB_UI_BUILD").is_some() {
         println!("cargo:warning=Skipping web UI build because KDBX_GIT_SKIP_WEB_UI_BUILD is set");
         return;
     }
 
-    ensure_web_ui_dependencies(&web_ui_dir);
+    ensure_web_ui_dependencies(&manifest_dir);
     run_command(
-        &web_ui_dir,
+        &manifest_dir,
         npm_command(),
         &["run", "build"],
         "failed to build web UI",
@@ -91,7 +89,14 @@ fn visit_files(path: &Path, visitor: &mut impl FnMut(&Path)) {
         };
 
         if file_type.is_dir() {
-            visit_files(&entry_path, visitor);
+            let skip = entry
+                .file_name()
+                .to_str()
+                .map(|name| name == "node_modules" || name == ".svelte-kit" || name == "build")
+                .unwrap_or(false);
+            if !skip {
+                visit_files(&entry_path, visitor);
+            }
         } else if file_type.is_file() {
             visitor(&entry_path);
         }

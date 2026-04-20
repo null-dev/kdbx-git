@@ -59,7 +59,7 @@ Notes:
 - `git_store` is a bare repo, so inspect it by `cd`-ing into it and running normal git commands.
 - `sync_state_path` optionally overrides where the server stores its sync state. If omitted, it defaults to `sync-state.json` next to `git_store`.
 - `keegate_api.enabled` defaults to `true`; set it to `false` to disable the KeeGate HTTP API routes entirely.
-- `web_ui.enabled` defaults to `false`; the server crate automatically builds the Svelte frontend from `web-ui/` during Cargo builds and serves the generated assets from `frontend_dist`.
+- `web_ui.enabled` defaults to `false`; the dedicated `kdbx-git-web-ui` crate builds the Svelte frontend from `web-ui/` during Cargo builds, and the server serves the generated assets from `frontend_dist`.
 - `web_ui.admin_users` defines admin logins for the web UI using Argon2 password hashes.
 
 ## Usage
@@ -76,7 +76,7 @@ Start the server:
 cargo run -p kdbx-git -- --config config.toml
 ```
 
-If you enable the web UI, `cargo build`, `cargo run`, and `cargo test -p kdbx-git` will build the Svelte frontend automatically. Then open:
+If you enable the web UI, `cargo build`, `cargo run`, and `cargo test -p kdbx-git` will build the `kdbx-git-web-ui` crate automatically. Then open:
 
 ```text
 http://HOST:8080/ui

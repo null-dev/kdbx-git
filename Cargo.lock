@@ -2704,6 +2704,7 @@ dependencies = [
  "kdbx-git-common",
  "kdbx-git-keegate-api",
  "kdbx-git-sync-local",
+ "kdbx-git-web-ui",
  "keepass",
  "mime_guess",
  "reqwest",
@@ -2782,6 +2783,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "kdbx-git-web-ui"
+version = "0.1.0"
 
 [[package]]
 name = "keepass"

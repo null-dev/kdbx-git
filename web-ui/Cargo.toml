@@ -1,0 +1,8 @@
+[package]
+name = "kdbx-git-web-ui"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[lib]
+path = "rust-src/lib.rs"

@@ -118,6 +118,7 @@ The project should use one integration model:
 
 - SvelteKit handles UI routes under `/ui`
 - Rust handles JSON and SSE routes under `/api/ui/v1/...` plus existing server APIs
+- the frontend lives in its own dedicated workspace crate so its build pipeline is owned separately from the server crate
 
 - develop `web-ui/` with the Svelte dev server
 - build the frontend during release

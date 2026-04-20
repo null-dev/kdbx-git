@@ -215,6 +215,29 @@ async fn keegate_query_filters_and_authorizes_entries() {
 }
 
 #[tokio::test]
+async fn keegate_query_supports_get_query_filters() {
+    let server = start_seeded_server().await;
+    let client = Client::new();
+
+    let response = client
+        .get(format!(
+            "{}/api/v1/keegate/entries/query?tag=shared&title_contains=redis&limit=5",
+            server.base_url
+        ))
+        .basic_auth("app-client", Some("app-secret"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+
+    assert_eq!(body["meta"]["count"], 1);
+    assert_eq!(body["meta"]["limit"], 5);
+    assert_eq!(body["entries"][0]["title"], "Shared Redis");
+}
+
+#[tokio::test]
 async fn keegate_resolve_uuid_returns_first_matching_entry_shape() {
     let server = start_seeded_server().await;
     let client = Client::new();

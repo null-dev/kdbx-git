@@ -259,7 +259,7 @@ Semantics:
 - resolve endpoints always return the standard multi-entry response shape used for entry search
 - clients should assume a resolve URL may return multiple entries
 - when a client expects only one entry, it should use the first returned entry
-- `GET /api/v1/keegate/entries/resolve/query?...` should be handled internally as `POST /api/v1/keegate/entries/query`
+- `GET /api/v1/keegate/entries/resolve/query?...` should be handled internally as `GET /api/v1/keegate/entries/query?...`
 - if the UUID exists and is authorized, return a single-element `entries` array
 - if the UUID does not exist, return `404 Not Found`
 - if the UUID exists but is not authorized for the authenticated user, also return `404 Not Found`
@@ -268,18 +268,27 @@ These endpoints are the canonical translation targets for the KeeGate URL scheme
 
 ### 3. Search Endpoint
 
+`GET /api/v1/keegate/entries/query?...`
+
 `POST /api/v1/keegate/entries/query`
 
 Purpose:
 
 - retrieve entries by flexible boolean search
 - support nested `and` / `or` combinations across supported predicates
+- support a URL-query form for simple client-driven lookups
 
 Authentication:
 
 - required
 
-Why `POST`:
+GET query-string form:
+
+- supports simple flat filters using query parameters such as `title_contains`, `title_regex`, `tag`, `uuid`, and `limit`
+- if multiple filter parameters are present, they should be combined with `and` semantics
+- this is the form used by `kg:///query?...` resolution
+
+Why keep `POST`:
 
 - nested boolean expressions are awkward in query parameters
 - JSON is easier to extend later
@@ -295,6 +304,7 @@ These are optional and can be added later if desired, but are not required for v
 The core design should be built around:
 
 - `GET /api/v1/keegate/entries/resolve/...` for single-string URL resolution
+- `GET /api/v1/keegate/entries/query?...` for simple URL-query search
 - `POST /api/v1/keegate/entries/query` for flexible structured search
 
 ## Query Language
@@ -671,6 +681,7 @@ Suggested handlers:
 - `GET /api/v1/keegate/info`
 - `GET /api/v1/keegate/entries/resolve/uuid/:uuid`
 - `GET /api/v1/keegate/entries/resolve/query`
+- `GET /api/v1/keegate/entries/query`
 - `POST /api/v1/keegate/entries/query`
 
 ### Authentication Middleware
@@ -727,7 +738,9 @@ fn matches(entry: &StorageEntry, filter: &EntryFilter) -> bool
 
 For `GET /api/v1/keegate/entries/resolve/uuid/:uuid`, the server can reuse the same entry indexing and authorization helpers while skipping the general boolean filter parser.
 
-For `GET /api/v1/keegate/entries/resolve/query`, the server should parse the URL query string into the same internal filter representation used by `POST /api/v1/keegate/entries/query`, then execute the normal query path.
+For `GET /api/v1/keegate/entries/query`, the server should parse the URL query string into the same internal filter representation used by `POST /api/v1/keegate/entries/query`, then execute the normal query path.
+
+For `GET /api/v1/keegate/entries/resolve/query`, the server should reuse the same GET query handler as `GET /api/v1/keegate/entries/query`.
 
 ### Entry Traversal
 
@@ -819,6 +832,7 @@ Implement only:
 - KeeGate URL parsing for `kg://username:password@host`, `kg://username:password@host/uuid/<uuid>`, `kg://username:password@host/query?...`, `kg:///uuid/<uuid>`, and `kg:///query?...`
 - `GET /api/v1/keegate/entries/resolve/uuid/{uuid}`
 - `GET /api/v1/keegate/entries/resolve/query?...`
+- `GET /api/v1/keegate/entries/query?...`
 - `POST /api/v1/keegate/entries/query`
 - Basic Auth against `KeeGate Users`
 - tag-intersection authorization

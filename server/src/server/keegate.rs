@@ -3,7 +3,7 @@ use axum::{
     extract::{rejection::QueryRejection, Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::get,
     Json, Router,
 };
 use axum_extra::{
@@ -35,7 +35,10 @@ pub(super) fn build_keegate_router() -> Router<AppState> {
             "/api/v1/keegate/entries/resolve/query",
             get(resolve_query_handler),
         )
-        .route("/api/v1/keegate/entries/query", post(query_entries_handler))
+        .route(
+            "/api/v1/keegate/entries/query",
+            get(query_entries_get_handler).post(query_entries_post_handler),
+        )
 }
 
 pub(super) async fn log_startup_warnings(state: &AppState) {
@@ -72,7 +75,7 @@ async fn info_handler() -> impl IntoResponse {
     })
 }
 
-async fn query_entries_handler(
+async fn query_entries_post_handler(
     State(state): State<AppState>,
     auth: Option<TypedHeader<Authorization<Basic>>>,
     body: Bytes,
@@ -93,6 +96,14 @@ async fn query_entries_handler(
         Ok(response) => Json(response).into_response(),
         Err(response) => response,
     }
+}
+
+async fn query_entries_get_handler(
+    State(state): State<AppState>,
+    auth: Option<TypedHeader<Authorization<Basic>>>,
+    query: Result<Query<QueryRequestParams>, QueryRejection>,
+) -> Response {
+    execute_query_request(&state, auth, query).await
 }
 
 async fn resolve_uuid_handler(
@@ -125,7 +136,15 @@ async fn resolve_uuid_handler(
 async fn resolve_query_handler(
     State(state): State<AppState>,
     auth: Option<TypedHeader<Authorization<Basic>>>,
-    query: Result<Query<ResolveQueryParams>, QueryRejection>,
+    query: Result<Query<QueryRequestParams>, QueryRejection>,
+) -> Response {
+    execute_query_request(&state, auth, query).await
+}
+
+async fn execute_query_request(
+    state: &AppState,
+    auth: Option<TypedHeader<Authorization<Basic>>>,
+    query: Result<Query<QueryRequestParams>, QueryRejection>,
 ) -> Response {
     let Query(params) = match query {
         Ok(params) => params,
@@ -155,7 +174,7 @@ async fn resolve_query_handler(
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ResolveQueryParams {
+struct QueryRequestParams {
     #[serde(default)]
     title_contains: Option<String>,
     #[serde(default)]
@@ -168,7 +187,7 @@ struct ResolveQueryParams {
     limit: Option<usize>,
 }
 
-impl ResolveQueryParams {
+impl QueryRequestParams {
     fn into_request(self) -> std::result::Result<QueryEntriesRequest, String> {
         let mut filters = Vec::new();
 
@@ -190,10 +209,12 @@ impl ResolveQueryParams {
         }
 
         let filter = match filters.len() {
-            0 => return Err(
-                "resolve query requires at least one of: title_contains, title_regex, tag, uuid"
-                    .to_string(),
-            ),
+            0 => {
+                return Err(
+                    "query requires at least one of: title_contains, title_regex, tag, uuid"
+                        .to_string(),
+                )
+            }
             1 => filters.pop().expect("single filter must exist"),
             _ => QueryFilterRequest::And(AndFilter { and: filters }),
         };

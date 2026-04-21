@@ -2703,6 +2703,7 @@ dependencies = [
  "jwt-simple",
  "kdbx-git-common",
  "kdbx-git-keegate-api",
+ "kdbx-git-keegate-client",
  "kdbx-git-sync-local",
  "kdbx-git-web-ui",
  "keepass",

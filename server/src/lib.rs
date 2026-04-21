@@ -6,6 +6,7 @@ use tracing::info;
 
 pub mod config;
 pub mod init;
+pub mod keegate;
 pub mod server;
 mod sync_state;
 
@@ -19,6 +20,9 @@ pub enum CliCommand {
     Init {
         config_path: PathBuf,
         source_path: PathBuf,
+    },
+    KeeGateResolve {
+        reference: String,
     },
 }
 
@@ -34,6 +38,19 @@ struct RawCli {
 #[derive(Debug, Subcommand)]
 enum RawCommand {
     Init { source_path: PathBuf },
+    Keegate {
+        #[command(subcommand)]
+        command: RawKeeGateCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RawKeeGateCommand {
+    /// Resolve a KeeGate URL (kg://) and print matching entries as JSON
+    Resolve {
+        /// Absolute KeeGate reference, e.g. kg://user:pass@host/uuid/<uuid>
+        reference: String,
+    },
 }
 
 pub fn init_observability() -> Result<()> {
@@ -63,6 +80,9 @@ where
             config_path: raw.config,
             source_path,
         }),
+        Some(RawCommand::Keegate {
+            command: RawKeeGateCommand::Resolve { reference },
+        }) => Ok(CliCommand::KeeGateResolve { reference }),
     }
 }
 
@@ -78,6 +98,7 @@ where
             config_path,
             source_path,
         } => init::init_from_config_path(&config_path, &source_path).await,
+        CliCommand::KeeGateResolve { reference } => keegate::resolve(&reference).await,
     }
 }
 

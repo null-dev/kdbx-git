@@ -29,6 +29,7 @@ web-push.workspace = true
 
 kdbx-git-common.workspace = true
 kdbx-git-keegate-api.workspace = true
+kdbx-git-keegate-client.workspace = true
 kdbx-git-web-ui.workspace = true
 
 [dev-dependencies]

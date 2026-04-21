@@ -2707,7 +2707,6 @@ dependencies = [
  "kdbx-git-web-ui",
  "keepass",
  "reqwest",
- "rust-argon2",
  "serde",
  "serde_json",
  "tempfile",

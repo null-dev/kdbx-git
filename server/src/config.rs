@@ -48,7 +48,7 @@ pub struct WebUiConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WebUiAdminUser {
     pub username: String,
-    pub password_hash: String,
+    pub password: String,
 }
 
 /// Credentials for opening/saving the server-managed KDBX database.

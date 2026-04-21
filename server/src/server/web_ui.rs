@@ -1,6 +1,5 @@
 use std::path::{Component, Path, PathBuf};
 
-use argon2::verify_encoded;
 use axum::{
     extract::{Path as AxumPath, State},
     http::{header, HeaderMap, StatusCode},
@@ -84,31 +83,23 @@ async fn login_handler(
         return unauthorized_response("invalid admin username or password");
     };
 
-    match verify_encoded(&admin_user.password_hash, payload.password.as_bytes()) {
-        Ok(true) => {
-            let cookie = build_session_cookie(
-                &payload.username,
-                state.config.web_ui.session_ttl_hours,
-                request_is_secure(&headers),
-            );
-            let jar = jar.add(cookie);
-            (
-                jar,
-                Json(SessionResponse {
-                    authenticated: true,
-                    username: Some(payload.username),
-                }),
-            )
-                .into_response()
-        }
-        Ok(false) => unauthorized_response("invalid admin username or password"),
-        Err(err) => {
-            warn!(
-                "web ui login: failed to verify password hash for '{}': {err}",
-                admin_user.username
-            );
-            internal_error_response("failed to validate admin credentials")
-        }
+    if admin_user.password == payload.password {
+        let cookie = build_session_cookie(
+            &payload.username,
+            state.config.web_ui.session_ttl_hours,
+            request_is_secure(&headers),
+        );
+        let jar = jar.add(cookie);
+        (
+            jar,
+            Json(SessionResponse {
+                authenticated: true,
+                username: Some(payload.username),
+            }),
+        )
+            .into_response()
+    } else {
+        unauthorized_response("invalid admin username or password")
     }
 }
 

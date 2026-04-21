@@ -1,19 +1,13 @@
 use super::*;
 
-use argon2::Config as Argon2Config;
 use kdbx_git::config::WebUiAdminUser;
-
-fn admin_password_hash(password: &str) -> String {
-    argon2::hash_encoded(password.as_bytes(), b"web-ui-test-salt", &Argon2Config::default())
-        .unwrap()
-}
 
 fn enable_web_ui(config: &mut kdbx_git::config::Config, root: &Path) {
     let _ = root;
     config.web_ui.enabled = true;
     config.web_ui.admin_users = vec![WebUiAdminUser {
         username: "admin".into(),
-        password_hash: admin_password_hash("admin-pass"),
+        password: "admin-pass".into(),
     }];
 }
 

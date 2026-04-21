@@ -41,7 +41,7 @@ session_ttl_hours = 8
 
 [[web_ui.admin_users]]
 username = "admin"
-password_hash = "$argon2id$..."
+password = "admin-password"
 
 [[clients]]
 id = "laptop"
@@ -59,7 +59,7 @@ Notes:
 - `sync_state_path` optionally overrides where the server stores its sync state. If omitted, it defaults to `sync-state.json` next to `git_store`.
 - `keegate_api.enabled` defaults to `true`; set it to `false` to disable the KeeGate HTTP API routes entirely.
 - `web_ui.enabled` defaults to `false`; the dedicated `kdbx-git-web-ui` crate builds the Svelte frontend from `web-ui/` during Cargo builds, embeds the generated assets into the binary, and the server serves those embedded assets directly.
-- `web_ui.admin_users` defines admin logins for the web UI using Argon2 password hashes.
+- `web_ui.admin_users` defines admin logins for the web UI using plaintext passwords from the config file.
 
 ## Usage
 

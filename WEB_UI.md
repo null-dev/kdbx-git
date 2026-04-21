@@ -183,12 +183,11 @@ listen_path = "/ui"
 
 [[web_ui.admin_users]]
 username = "admin"
-password_hash = "..."
+password = "admin-password"
 ```
 
 Use:
 
-- Argon2 password hashes
 - secure HTTP-only cookies
 - CSRF protection for any state-changing request
 - a short idle timeout and explicit logout
@@ -455,7 +454,7 @@ session_ttl_hours = 8
 
 [[web_ui.admin_users]]
 username = "admin"
-password_hash = "$argon2id$..."
+password = "admin-password"
 ```
 
 Possible later additions:

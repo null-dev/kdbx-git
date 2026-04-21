@@ -1,5 +1,5 @@
 use eyre::Result;
-use kdbx_git_common::kdbx::KdbxCredentials;
+use kdbx_git_core::kdbx::KdbxCredentials;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 

@@ -2701,7 +2701,7 @@ dependencies = [
  "gix",
  "http 1.4.0",
  "jwt-simple",
- "kdbx-git-common",
+ "kdbx-git-core",
  "kdbx-git-keegate-api",
  "kdbx-git-keegate-client",
  "kdbx-git-sync-local",
@@ -2719,7 +2719,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kdbx-git-common"
+name = "kdbx-git-core"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",

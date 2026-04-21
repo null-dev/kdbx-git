@@ -240,7 +240,7 @@ async fn authenticate_request(
     auth: Option<TypedHeader<Authorization<Basic>>>,
 ) -> std::result::Result<
     (
-        kdbx_git_common::storage::types::StorageDatabase,
+        kdbx_git_core::storage::types::StorageDatabase,
         AuthenticatedUser,
     ),
     Response,
@@ -273,7 +273,7 @@ async fn authenticate_request(
 
 async fn load_main_database(
     state: &AppState,
-) -> Result<kdbx_git_common::storage::types::StorageDatabase> {
+) -> Result<kdbx_git_core::storage::types::StorageDatabase> {
     let store = state.store.lock().await;
     let db = store
         .read_branch(MAIN_BRANCH.to_string())

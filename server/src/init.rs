@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::config::Config;
 use color_eyre::eyre::{Context, Result};
-use kdbx_git_common::{kdbx::parse_kdbx_sync, store::GitStore};
+use kdbx_git_core::{kdbx::parse_kdbx_sync, store::GitStore};
 use tokio::task::spawn_blocking;
 use tracing::info;
 

@@ -1,5 +1,5 @@
 [package]
-name = "kdbx-git-common"
+name = "kdbx-git-core"
 version.workspace = true
 edition.workspace = true
 

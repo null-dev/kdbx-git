@@ -10,7 +10,7 @@ pub mod keegate;
 pub mod server;
 mod sync_state;
 
-pub use kdbx_git_common::{kdbx, storage, store};
+pub use kdbx_git_core::{kdbx, storage, store};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {

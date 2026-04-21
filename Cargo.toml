@@ -1,5 +1,5 @@
 [workspace]
-members = ["server", "common", "keegate-api", "keegate-client", "storage-types", "sync-local", "web-ui"]
+members = ["server", "core", "keegate-api", "keegate-client", "storage-types", "sync-local", "web-ui"]
 resolver = "2"
 
 [workspace.package]
@@ -37,7 +37,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 web-push = { version = "0.11.0", default-features = false }
 
-kdbx-git-common = { path = "common" }
+kdbx-git-core = { path = "core" }
 kdbx-git-keegate-api = { path = "keegate-api" }
 kdbx-git-keegate-client = { path = "keegate-client" }
 kdbx-git-storage-types = { path = "storage-types" }

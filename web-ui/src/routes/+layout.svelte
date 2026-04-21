@@ -2,6 +2,7 @@
 	import './layout.css';
 
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { page } from '$app/state';
 	import favicon from '$lib/assets/favicon.svg';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -27,7 +28,7 @@
 		} finally {
 			clearSession();
 			isLoggingOut = false;
-			await goto('/login');
+			await goto(`${base}/login`);
 		}
 	}
 </script>
@@ -52,7 +53,7 @@
 
 			<nav class="flex items-center gap-2">
 				<a
-					href="/ui/"
+					href={`${base}/`}
 					class="rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground"
 				>
 					Dashboard
@@ -67,7 +68,7 @@
 					</Button>
 				{:else if !isLoginRoute}
 					<a
-						href="/ui/login"
+						href={`${base}/login`}
 						class="rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground"
 					>
 						Login

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { get } from 'svelte/store';
+	import { base } from '$app/paths';
 
 	import { getStatus, type StatusResponse } from '$lib/api';
 	import Badge from '$lib/components/ui/badge/badge.svelte';
@@ -20,7 +20,7 @@
 		const currentSession = await refreshSession();
 
 		if (!currentSession.authenticated) {
-			await goto('/login');
+			await goto(`${base}/login`);
 			return;
 		}
 
@@ -28,7 +28,7 @@
 			status = await getStatus();
 		} catch (error) {
 			if (error instanceof Error && error.name === 'UnauthorizedError') {
-				await goto('/login');
+				await goto(`${base}/login`);
 				return;
 			}
 			errorMessage = error instanceof Error ? error.message : 'Failed to load server status.';

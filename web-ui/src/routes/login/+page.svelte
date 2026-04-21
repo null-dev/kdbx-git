@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { get } from 'svelte/store';
+	import { base } from '$app/paths';
 
 	import { login as loginRequest } from '$lib/api';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -22,7 +22,7 @@
 	onMount(async () => {
 		const currentSession = await refreshSession();
 		if (currentSession.authenticated) {
-			await goto('/');
+			await goto(`${base}/`);
 		}
 	});
 
@@ -33,7 +33,7 @@
 		try {
 			await loginRequest(username, password);
 			await refreshSession();
-			await goto('/');
+			await goto(`${base}/`);
 		} catch (error) {
 			errorMessage = error instanceof Error ? error.message : 'Login failed.';
 		} finally {

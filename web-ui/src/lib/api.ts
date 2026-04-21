@@ -7,7 +7,7 @@ export type StatusResponse = {
 	authenticated_username: string;
 	bind_addr: string;
 	git_store: string;
-	frontend_dist: string;
+	asset_delivery: string;
 	keegate_api_enabled: boolean;
 	client_count: number;
 	push_endpoint_count: number;

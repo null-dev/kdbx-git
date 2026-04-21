@@ -19,7 +19,6 @@ futures-util.workspace = true
 gix.workspace = true
 http.workspace = true
 jwt-simple.workspace = true
-mime_guess.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

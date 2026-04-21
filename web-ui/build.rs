@@ -36,6 +36,7 @@ fn main() {
         &["run", "build"],
         "failed to build web UI",
     );
+    generate_embedded_assets(&manifest_dir);
 }
 
 fn ensure_web_ui_dependencies(web_ui_dir: &Path) {
@@ -63,43 +64,88 @@ fn npm_command() -> &'static str {
 }
 
 fn emit_rerun_if_changed(path: &Path) {
-    if path.is_file() {
+    if path.exists() {
         println!("cargo:rerun-if-changed={}", path.display());
-        return;
     }
-
-    if !path.exists() {
-        return;
-    }
-
-    visit_files(path, &mut |entry| {
-        println!("cargo:rerun-if-changed={}", entry.display());
-    });
 }
 
-fn visit_files(path: &Path, visitor: &mut impl FnMut(&Path)) {
-    let Ok(entries) = fs::read_dir(path) else {
-        return;
-    };
+fn generate_embedded_assets(web_ui_dir: &Path) {
+    let build_dir = web_ui_dir.join("build");
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("missing OUT_DIR"));
+    let generated_path = out_dir.join("generated_assets.rs");
+
+    let mut asset_paths = Vec::new();
+    collect_files(&build_dir, &build_dir, &mut asset_paths);
+    asset_paths.sort();
+
+    let mut source = String::new();
+    source.push_str("fn generated_asset(path: &str) -> Option<EmbeddedAsset> {\n");
+    source.push_str("    match path {\n");
+
+    for asset_path in asset_paths {
+        let full_path = build_dir.join(&asset_path);
+        let content_type = content_type_for(&asset_path);
+        source.push_str(&format!(
+            "        {:?} => Some(EmbeddedAsset {{ bytes: include_bytes!(r#\"{}\"#), content_type: {:?} }}),\n",
+            asset_path,
+            full_path.display(),
+            content_type
+        ));
+    }
+
+    source.push_str("        _ => None,\n");
+    source.push_str("    }\n");
+    source.push_str("}\n");
+
+    fs::write(&generated_path, source).expect("failed to write embedded asset manifest");
+}
+
+fn collect_files(root: &Path, dir: &Path, output: &mut Vec<String>) {
+    let entries = fs::read_dir(dir).unwrap_or_else(|err| {
+        panic!("failed to read embedded asset directory '{}': {err}", dir.display())
+    });
 
     for entry in entries.flatten() {
-        let entry_path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
+        let path = entry.path();
+        let file_type = entry.file_type().unwrap_or_else(|err| {
+            panic!(
+                "failed to read file type for embedded asset '{}': {err}",
+                path.display()
+            )
+        });
 
         if file_type.is_dir() {
-            let skip = entry
-                .file_name()
-                .to_str()
-                .map(|name| name == "node_modules" || name == ".svelte-kit" || name == "build")
-                .unwrap_or(false);
-            if !skip {
-                visit_files(&entry_path, visitor);
-            }
+            collect_files(root, &path, output);
         } else if file_type.is_file() {
-            visitor(&entry_path);
+            let relative = path
+                .strip_prefix(root)
+                .expect("embedded asset should be under build root")
+                .to_string_lossy()
+                .replace('\\', "/");
+            output.push(relative);
         }
+    }
+}
+
+fn content_type_for(asset_path: &str) -> &'static str {
+    match Path::new(asset_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+    {
+        "html" => "text/html; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "txt" => "text/plain; charset=utf-8",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        _ => "application/octet-stream",
     }
 }
 

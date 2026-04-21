@@ -149,11 +149,9 @@
 
 			<Card>
 				<CardHeader class="pb-3">
-					<CardTitle class="text-base">Frontend dist</CardTitle>
+					<CardTitle class="text-base">Asset delivery</CardTitle>
 				</CardHeader>
-				<CardContent class="break-all text-sm text-muted-foreground">
-					{status.frontend_dist}
-				</CardContent>
+				<CardContent class="text-sm text-muted-foreground">{status.asset_delivery}</CardContent>
 			</Card>
 
 			<Card>

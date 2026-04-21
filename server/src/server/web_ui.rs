@@ -2,7 +2,6 @@ use std::path::{Component, Path, PathBuf};
 
 use argon2::verify_encoded;
 use axum::{
-    body::Body,
     extract::{Path as AxumPath, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -11,6 +10,7 @@ use axum::{
 };
 use axum_extra::extract::{cookie::{Cookie, SameSite}, PrivateCookieJar};
 use cookie::time::Duration as CookieDuration;
+use kdbx_git_web_ui::{get_asset, index_asset};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -45,7 +45,7 @@ struct StatusResponse {
     authenticated_username: String,
     bind_addr: String,
     git_store: String,
-    frontend_dist: String,
+    asset_delivery: &'static str,
     keegate_api_enabled: bool,
     client_count: usize,
     push_endpoint_count: usize,
@@ -157,7 +157,7 @@ async fn status_handler(
         authenticated_username: username,
         bind_addr: state.config.bind_addr.clone(),
         git_store: state.config.git_store.display().to_string(),
-        frontend_dist: state.config.web_ui.frontend_dist.display().to_string(),
+        asset_delivery: "embedded",
         keegate_api_enabled: state.config.keegate_api.enabled,
         client_count: state.config.clients.len(),
         push_endpoint_count,
@@ -167,25 +167,29 @@ async fn status_handler(
 }
 
 pub(super) async fn web_ui_index_handler(State(state): State<AppState>) -> Response {
-    serve_frontend_asset(&state, &state.config.web_ui.frontend_dist.join("index.html")).await
+    let _ = state;
+    serve_embedded_asset(index_asset())
 }
 
 pub(super) async fn web_ui_asset_handler(
     State(state): State<AppState>,
     AxumPath(path): AxumPath<String>,
 ) -> Response {
+    let _ = state;
     let Some(relative_path) = sanitize_relative_path(&path) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    let has_extension = Path::new(&relative_path).extension().is_some();
-    let asset_path = if has_extension {
-        state.config.web_ui.frontend_dist.join(&relative_path)
+    let asset_path = if Path::new(&relative_path).extension().is_some() {
+        relative_path.to_string_lossy().replace('\\', "/")
     } else {
-        state.config.web_ui.frontend_dist.join("index.html")
+        "index.html".to_string()
     };
 
-    serve_frontend_asset(&state, &asset_path).await
+    match get_asset(&asset_path) {
+        Some(asset) => serve_embedded_asset(asset),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 fn current_admin_username(state: &AppState, jar: &PrivateCookieJar) -> Option<String> {
@@ -233,31 +237,12 @@ fn sanitize_relative_path(path: &str) -> Option<PathBuf> {
     Some(clean)
 }
 
-async fn serve_frontend_asset(state: &AppState, path: &Path) -> Response {
-    match tokio::fs::read(path).await {
-        Ok(bytes) => Response::builder()
-            .status(StatusCode::OK)
-            .header(
-                header::CONTENT_TYPE,
-                mime_guess::from_path(path).first_or_octet_stream().as_ref(),
-            )
-            .body(Body::from(bytes))
-            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            let fallback = state.config.web_ui.frontend_dist.join("index.html");
-            if path != fallback {
-                return StatusCode::NOT_FOUND.into_response();
-            }
-            StatusCode::NOT_FOUND.into_response()
-        }
-        Err(err) => {
-            warn!(
-                "web ui asset: failed to read '{}': {err}",
-                path.display()
-            );
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
-    }
+fn serve_embedded_asset(asset: kdbx_git_web_ui::EmbeddedAsset) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, asset.content_type)
+        .body(axum::body::Body::from(asset.bytes))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 fn unauthorized_response(message: &str) -> Response {

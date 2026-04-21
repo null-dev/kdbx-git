@@ -1,6 +1,5 @@
 use eyre::Result;
 use kdbx_git_common::kdbx::KdbxCredentials;
-use kdbx_git_web_ui::DEFAULT_FRONTEND_DIST;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -42,8 +41,6 @@ pub struct WebUiConfig {
     pub base_path: String,
     #[serde(default = "default_web_ui_session_ttl_hours")]
     pub session_ttl_hours: u64,
-    #[serde(default = "default_web_ui_frontend_dist")]
-    pub frontend_dist: PathBuf,
     #[serde(default)]
     pub admin_users: Vec<WebUiAdminUser>,
 }
@@ -103,7 +100,6 @@ impl Default for WebUiConfig {
             enabled: false,
             base_path: default_web_ui_base_path(),
             session_ttl_hours: default_web_ui_session_ttl_hours(),
-            frontend_dist: default_web_ui_frontend_dist(),
             admin_users: Vec::new(),
         }
     }
@@ -119,10 +115,6 @@ fn default_web_ui_base_path() -> String {
 
 fn default_web_ui_session_ttl_hours() -> u64 {
     8
-}
-
-fn default_web_ui_frontend_dist() -> PathBuf {
-    PathBuf::from(DEFAULT_FRONTEND_DIST)
 }
 
 impl KdbxCredentials for DatabaseCredentials {

@@ -458,15 +458,6 @@ username = "admin"
 password_hash = "$argon2id$..."
 ```
 
-Possible frontend-specific additions later:
-
-```toml
-[web_ui]
-frontend_dist = "./web-ui/build"
-```
-
-This path is the built frontend artifact directory that the Rust server serves in production.
-
 Possible later additions:
 
 ```toml
@@ -482,7 +473,7 @@ audit_log_path = "./web-ui-audit.jsonl"
 - add `web_ui` config section
 - add admin session auth
 - scaffold `web-ui/` with `SvelteKit`, Tailwind, and `shadcn-svelte`
-- implement production asset serving from the Rust server
+- implement embedded frontend asset serving from the Rust server
 - add app shell, top nav, login/logout, and shared layout
 - add `/ui` dashboard shell
 

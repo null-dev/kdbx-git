@@ -9,23 +9,12 @@ fn admin_password_hash(password: &str) -> String {
 }
 
 fn enable_web_ui(config: &mut kdbx_git::config::Config, root: &Path) {
+    let _ = root;
     config.web_ui.enabled = true;
-    config.web_ui.frontend_dist = root.join("frontend");
     config.web_ui.admin_users = vec![WebUiAdminUser {
         username: "admin".into(),
         password_hash: admin_password_hash("admin-pass"),
     }];
-}
-
-fn write_frontend_dist(root: &Path) {
-    let dist = root.join("frontend");
-    std::fs::create_dir_all(dist.join("assets")).unwrap();
-    std::fs::write(
-        dist.join("index.html"),
-        r#"<!doctype html><html><body><div id="app">web ui shell</div></body></html>"#,
-    )
-    .unwrap();
-    std::fs::write(dist.join("assets").join("app.js"), "console.log('web-ui');").unwrap();
 }
 
 fn session_cookie(response: &reqwest::Response) -> String {
@@ -46,7 +35,6 @@ async fn web_ui_login_sets_session_cookie_and_status_requires_auth() {
     let tempdir = TempDir::new().unwrap();
     let mut config = test_config(tempdir.path());
     enable_web_ui(&mut config, tempdir.path());
-    write_frontend_dist(tempdir.path());
 
     let server = TestServer::start(config.clone(), tempdir).await.unwrap();
     let client = Client::new();
@@ -92,7 +80,7 @@ async fn web_ui_login_sets_session_cookie_and_status_requires_auth() {
     let status_body: serde_json::Value = status.json().await.unwrap();
     assert_eq!(status_body["authenticated_username"], "admin");
     assert_eq!(status_body["client_count"], 3);
-    assert_eq!(status_body["frontend_dist"], config.web_ui.frontend_dist.display().to_string());
+    assert_eq!(status_body["asset_delivery"], "embedded");
 
     let logout = client
         .post(format!("{}/api/ui/v1/session/logout", server.base_url))
@@ -115,7 +103,6 @@ async fn web_ui_serves_spa_shell_and_static_assets() {
     let tempdir = TempDir::new().unwrap();
     let mut config = test_config(tempdir.path());
     enable_web_ui(&mut config, tempdir.path());
-    write_frontend_dist(tempdir.path());
 
     let server = TestServer::start(config, tempdir).await.unwrap();
     let client = Client::new();
@@ -126,7 +113,9 @@ async fn web_ui_serves_spa_shell_and_static_assets() {
         .await
         .unwrap();
     assert_eq!(shell.status(), StatusCode::OK);
-    assert!(shell.text().await.unwrap().contains("web ui shell"));
+    let shell_text = shell.text().await.unwrap();
+    assert!(shell_text.contains("__sveltekit_"));
+    assert!(shell_text.contains("/ui/_app/immutable/entry/start"));
 
     let nested_route = client
         .get(format!("{}/ui/login", server.base_url))
@@ -134,13 +123,15 @@ async fn web_ui_serves_spa_shell_and_static_assets() {
         .await
         .unwrap();
     assert_eq!(nested_route.status(), StatusCode::OK);
-    assert!(nested_route.text().await.unwrap().contains("web ui shell"));
+    let nested_text = nested_route.text().await.unwrap();
+    assert!(nested_text.contains("__sveltekit_"));
+    assert!(nested_text.contains("/ui/_app/immutable/entry/start"));
 
     let asset = client
-        .get(format!("{}/ui/assets/app.js", server.base_url))
+        .get(format!("{}/ui/robots.txt", server.base_url))
         .send()
         .await
         .unwrap();
     assert_eq!(asset.status(), StatusCode::OK);
-    assert_eq!(asset.text().await.unwrap(), "console.log('web-ui');");
+    assert!(asset.text().await.unwrap().contains("User-agent"));
 }

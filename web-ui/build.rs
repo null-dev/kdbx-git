@@ -17,10 +17,6 @@ fn main() {
     emit_rerun_if_changed(&manifest_dir.join("tsconfig.json"));
     emit_rerun_if_changed(&manifest_dir.join("src"));
     emit_rerun_if_changed(&manifest_dir.join("static"));
-    println!(
-        "cargo:rerun-if-changed={}",
-        manifest_dir.join("build").join("index.html").display()
-    );
     println!("cargo:rerun-if-env-changed=PATH");
     println!("cargo:rerun-if-env-changed=KDBX_GIT_SKIP_WEB_UI_BUILD");
 

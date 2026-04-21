@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 argon2.workspace = true
+kdbx-git-storage-types.workspace = true
 base64.workspace = true
 chrono.workspace = true
 eyre.workspace = true

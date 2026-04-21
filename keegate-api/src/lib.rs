@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use kdbx_git_common::storage::types::{StorageDatabase, StorageEntry, StorageGroup};
+use kdbx_git_storage_types::{StorageDatabase, StorageEntry, StorageGroup};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -415,7 +415,7 @@ fn valid_user_entry(entry: &StorageEntry) -> Option<ValidUserEntry<'_>> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use kdbx_git_common::storage::types::{
+    use kdbx_git_storage_types::{
         StorageDatabase, StorageEntry, StorageGroup, StorageMeta, StorageTimes, StorageValue,
     };
 
